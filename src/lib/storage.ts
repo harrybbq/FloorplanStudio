@@ -1,15 +1,18 @@
-import type { Plan } from '../types';
+import type { Plan, SavedFurniture } from '../types';
 
 const PLANS_KEY = 'fps:plans:v1';
 const ACTIVE_PLAN_KEY = 'fps:active-plan:v1';
 const UNITS_KEY = 'fps:units:v1';
+const LIBRARY_KEY = 'fps:library:v1';
 
 export function loadPlans(): Plan[] {
   try {
     const raw = localStorage.getItem(PLANS_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    // Migrate plans saved before `walls` existed.
+    return parsed.map((p: Plan) => ({ ...p, walls: Array.isArray(p.walls) ? p.walls : [] }));
   } catch {
     return [];
   }
@@ -40,4 +43,23 @@ export function loadUnits(): 'metric' | 'imperial' {
 
 export function saveUnits(units: 'metric' | 'imperial'): void {
   localStorage.setItem(UNITS_KEY, units);
+}
+
+export function loadLibrary(): SavedFurniture[] {
+  try {
+    const raw = localStorage.getItem(LIBRARY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveLibrary(items: SavedFurniture[]): void {
+  try {
+    localStorage.setItem(LIBRARY_KEY, JSON.stringify(items));
+  } catch (err) {
+    console.warn('Failed to save furniture library to localStorage', err);
+  }
 }

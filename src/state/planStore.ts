@@ -1,10 +1,22 @@
 import { create } from 'zustand';
-import type { Calibration, FurnitureItem, Mode, Plan, Point, UnitSystem } from '../types';
+import type {
+  Calibration,
+  FurnitureItem,
+  Mode,
+  PlacingTemplate,
+  Plan,
+  Point,
+  SavedFurniture,
+  UnitSystem,
+  Wall,
+} from '../types';
 import {
   loadActivePlanId,
+  loadLibrary,
   loadPlans,
   loadUnits,
   saveActivePlanId,
+  saveLibrary,
   savePlans,
   saveUnits,
 } from '../lib/storage';
@@ -32,17 +44,14 @@ function blankPlan(name = 'Untitled plan'): Plan {
     imageHeight: 0,
     calibration: null,
     furniture: [],
+    walls: [],
     createdAt: now,
     updatedAt: now,
   };
 }
 
-type PlacingTemplate = {
-  name: string;
-  widthMm: number;
-  depthMm: number;
-  heightMm: number;
-};
+/** Drop a trailing point that lands on top of the previous one (e.g. from a double-click). */
+const DEDUPE_PX = 2;
 
 interface PlanState {
   plans: Plan[];
@@ -54,6 +63,10 @@ interface PlanState {
   pendingCalibrationPoint: Point | null;
   /** Furniture template currently being placed (after Add Furniture form submission). */
   placingTemplate: PlacingTemplate | null;
+  /** In-progress wall polyline (image-space points). */
+  draftWallPoints: Point[];
+  /** Cross-plan furniture library. */
+  library: SavedFurniture[];
   /** Cached HTMLImageElement for the active plan's floorplan, for Konva. */
   imageElement: HTMLImageElement | null;
 
@@ -86,6 +99,18 @@ interface PlanState {
   rotateFurniture: (id: string, deltaDeg: number) => void;
   selectFurniture: (id: string | null) => void;
 
+  // — walls —
+  startWall: () => void;
+  addWallPoint: (p: Point) => void;
+  finishWall: () => void;
+  cancelWall: () => void;
+  deleteWall: (id: string) => void;
+  clearWalls: () => void;
+
+  // — library —
+  addToLibrary: (item: Omit<SavedFurniture, 'id'>) => void;
+  removeFromLibrary: (id: string) => void;
+
   // — misc —
   setMode: (mode: Mode) => void;
   setUnits: (units: UnitSystem) => void;
@@ -106,6 +131,8 @@ export const usePlanStore = create<PlanState>((set, get) => ({
   selectedFurnitureId: null,
   pendingCalibrationPoint: null,
   placingTemplate: null,
+  draftWallPoints: [],
+  library: loadLibrary(),
   imageElement: null,
 
   active: () => {
@@ -122,10 +149,11 @@ export const usePlanStore = create<PlanState>((set, get) => ({
       return {
         plans,
         activePlanId: p.id,
-        mode: 'select',
+        mode: 'select' as Mode,
         selectedFurnitureId: null,
         pendingCalibrationPoint: null,
         placingTemplate: null,
+        draftWallPoints: [],
         imageElement: null,
       };
     });
@@ -153,6 +181,7 @@ export const usePlanStore = create<PlanState>((set, get) => ({
       mode: 'select',
       pendingCalibrationPoint: null,
       placingTemplate: null,
+      draftWallPoints: [],
       imageElement: null,
     });
     saveActivePlanId(id);
@@ -230,9 +259,11 @@ export const usePlanStore = create<PlanState>((set, get) => ({
       depthMm: placingTemplate.depthMm,
       heightMm: placingTemplate.heightMm,
       rotation: 0,
-      source: 'manual',
-      confidence: 'user-entered',
-      color: FURNITURE_COLORS[Math.floor(Math.random() * FURNITURE_COLORS.length)],
+      source: placingTemplate.source ?? 'manual',
+      confidence: placingTemplate.confidence ?? 'user-entered',
+      color:
+        placingTemplate.color ??
+        FURNITURE_COLORS[Math.floor(Math.random() * FURNITURE_COLORS.length)],
     };
     const updated = plans.map(p =>
       p.id === activePlanId
@@ -299,7 +330,89 @@ export const usePlanStore = create<PlanState>((set, get) => ({
 
   selectFurniture: (id) => set({ selectedFurnitureId: id }),
 
-  setMode: (mode) => set({ mode, pendingCalibrationPoint: null, placingTemplate: null }),
+  // — walls —
+  startWall: () => {
+    set({ mode: 'wall', draftWallPoints: [], selectedFurnitureId: null, placingTemplate: null });
+  },
+
+  addWallPoint: (p) => {
+    set(state => {
+      const pts = state.draftWallPoints;
+      const last = pts[pts.length - 1];
+      if (last && Math.hypot(p.x - last.x, p.y - last.y) < DEDUPE_PX) {
+        return state; // ignore near-duplicate (e.g. the two clicks of a double-click)
+      }
+      return { draftWallPoints: [...pts, p] };
+    });
+  },
+
+  finishWall: () => {
+    const { draftWallPoints, plans, activePlanId } = get();
+    if (!activePlanId || draftWallPoints.length < 2) {
+      set({ draftWallPoints: [], mode: 'select' });
+      return;
+    }
+    const wall: Wall = { id: newId(), points: draftWallPoints };
+    const updated = plans.map(p =>
+      p.id === activePlanId
+        ? { ...p, walls: [...p.walls, wall], updatedAt: Date.now() }
+        : p
+    );
+    savePlans(updated);
+    set({ plans: updated, draftWallPoints: [], mode: 'select' });
+  },
+
+  cancelWall: () => set({ draftWallPoints: [], mode: 'select' }),
+
+  deleteWall: (id) => {
+    const { plans, activePlanId } = get();
+    if (!activePlanId) return;
+    const updated = plans.map(p =>
+      p.id === activePlanId
+        ? { ...p, walls: p.walls.filter(w => w.id !== id), updatedAt: Date.now() }
+        : p
+    );
+    savePlans(updated);
+    set({ plans: updated });
+  },
+
+  clearWalls: () => {
+    const { plans, activePlanId } = get();
+    if (!activePlanId) return;
+    const updated = plans.map(p =>
+      p.id === activePlanId ? { ...p, walls: [], updatedAt: Date.now() } : p
+    );
+    savePlans(updated);
+    set({ plans: updated });
+  },
+
+  // — library —
+  addToLibrary: (item) => {
+    set(state => {
+      // De-dupe by name + dimensions so the library doesn't fill with copies.
+      const exists = state.library.some(
+        l =>
+          l.name.toLowerCase() === item.name.toLowerCase() &&
+          l.widthMm === item.widthMm &&
+          l.depthMm === item.depthMm
+      );
+      if (exists) return state;
+      const library = [...state.library, { ...item, id: newId() }];
+      saveLibrary(library);
+      return { library };
+    });
+  },
+
+  removeFromLibrary: (id) => {
+    set(state => {
+      const library = state.library.filter(l => l.id !== id);
+      saveLibrary(library);
+      return { library };
+    });
+  },
+
+  setMode: (mode) =>
+    set({ mode, pendingCalibrationPoint: null, placingTemplate: null, draftWallPoints: [] }),
 
   setUnits: (units) => {
     saveUnits(units);

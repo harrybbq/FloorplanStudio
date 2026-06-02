@@ -4,9 +4,15 @@
 
 export type UnitSystem = 'metric' | 'imperial';
 
-export type Mode = 'select' | 'calibrate' | 'placing';
+export type Mode = 'select' | 'calibrate' | 'placing' | 'wall';
 
 export type Point = { x: number; y: number };
+
+/** A traced wall — a polyline in image pixel-space (>= 2 points). */
+export type Wall = {
+  id: string;
+  points: Point[];
+};
 
 /** Calibration: two pixel-space points + the real-world distance between them. */
 export type Calibration = {
@@ -47,6 +53,8 @@ export type Plan = {
   imageHeight: number;
   calibration: Calibration | null;
   furniture: FurnitureItem[];
+  /** Traced walls used for overlap detection. Optional for backward-compat. */
+  walls: Wall[];
   createdAt: number;
   updatedAt: number;
 };
@@ -59,4 +67,36 @@ export type FurnitureDimensions = {
   heightMm: number;
   source: 'manual' | 'scraper' | 'llm';
   confidence: 'user-entered' | 'verified' | 'estimated';
+};
+
+/** A reusable furniture definition saved to the cross-plan library. */
+export type SavedFurniture = {
+  id: string;
+  name: string;
+  widthMm: number;
+  depthMm: number;
+  heightMm: number;
+  color?: string;
+  source: 'manual' | 'scraper' | 'llm';
+  confidence: 'user-entered' | 'verified' | 'estimated';
+};
+
+/** A built-in furniture preset (standard dimensions). */
+export type FurniturePreset = {
+  category: string;
+  name: string;
+  widthMm: number;
+  depthMm: number;
+  heightMm: number;
+};
+
+/** Template handed to the placement flow. Carries optional styling/provenance. */
+export type PlacingTemplate = {
+  name: string;
+  widthMm: number;
+  depthMm: number;
+  heightMm: number;
+  color?: string;
+  source?: 'manual' | 'scraper' | 'llm';
+  confidence?: 'user-entered' | 'verified' | 'estimated';
 };

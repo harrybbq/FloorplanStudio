@@ -10,11 +10,14 @@ export default function App() {
   const plan = usePlanStore(s => s.active());
   const units = usePlanStore(s => s.units);
   const mode = usePlanStore(s => s.mode);
-  const beginPlacing = usePlanStore(s => s.beginPlacing);
   const selectedId = usePlanStore(s => s.selectedFurnitureId);
+  const draftWallCount = usePlanStore(s => s.draftWallPoints.length);
   const deleteFurniture = usePlanStore(s => s.deleteFurniture);
   const rotateFurniture = usePlanStore(s => s.rotateFurniture);
   const startCalibration = usePlanStore(s => s.startCalibration);
+  const startWall = usePlanStore(s => s.startWall);
+  const finishWall = usePlanStore(s => s.finishWall);
+  const cancelWall = usePlanStore(s => s.cancelWall);
   const setMode = usePlanStore(s => s.setMode);
   const cancelPlacing = usePlanStore(s => s.cancelPlacing);
 
@@ -24,7 +27,7 @@ export default function App() {
     ensureInitialPlan();
   }, []);
 
-  // Global shortcuts: V = select, C = calibrate, A = add furniture, Delete/Backspace = delete selected.
+  // Global shortcuts: V select · C calibrate · W wall · A add furniture · R rotate · Del delete.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       // Ignore when typing in inputs.
@@ -32,11 +35,16 @@ export default function App() {
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
         return;
       }
-      if (e.key === 'v' || e.key === 'V') {
+      if (e.key === 'Enter' && mode === 'wall') {
+        finishWall();
+      } else if (e.key === 'v' || e.key === 'V') {
         if (mode === 'placing') cancelPlacing();
+        if (mode === 'wall') cancelWall();
         setMode('select');
       } else if ((e.key === 'c' || e.key === 'C') && plan?.imageDataUrl) {
         startCalibration();
+      } else if ((e.key === 'w' || e.key === 'W') && plan?.imageDataUrl) {
+        startWall();
       } else if ((e.key === 'a' || e.key === 'A') && plan?.calibration) {
         setAddOpen(true);
       } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
@@ -47,7 +55,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [mode, plan?.imageDataUrl, plan?.calibration, selectedId, setMode, cancelPlacing, startCalibration, deleteFurniture, rotateFurniture]);
+  }, [mode, plan?.imageDataUrl, plan?.calibration, selectedId, setMode, cancelPlacing, cancelWall, startCalibration, startWall, finishWall, deleteFurniture, rotateFurniture]);
 
   const showCanvas = !!plan?.imageDataUrl;
 
@@ -78,6 +86,18 @@ export default function App() {
               Click on the plan to place. Esc to cancel.
             </ModeBanner>
           )}
+          {showCanvas && mode === 'wall' && (
+            <ModeBanner>
+              Click to trace a wall ({draftWallCount} {draftWallCount === 1 ? 'point' : 'points'}).
+              Double-click or Enter to finish.
+              <button className="ml-2 btn-ghost text-xs !text-white" onClick={() => finishWall()}>
+                Finish
+              </button>
+              <button className="btn-ghost text-xs !text-white" onClick={() => cancelWall()}>
+                Cancel (Esc)
+              </button>
+            </ModeBanner>
+          )}
           {showCanvas && mode === 'select' && !plan?.calibration && (
             <ModeBanner tone="warn">
               No scale set yet — calibrate before placing furniture.
@@ -86,16 +106,7 @@ export default function App() {
         </main>
       </div>
 
-      {addOpen && (
-        <AddFurnitureModal
-          units={units}
-          onCancel={() => setAddOpen(false)}
-          onConfirm={data => {
-            beginPlacing(data);
-            setAddOpen(false);
-          }}
-        />
-      )}
+      {addOpen && <AddFurnitureModal units={units} onClose={() => setAddOpen(false)} />}
     </div>
   );
 }

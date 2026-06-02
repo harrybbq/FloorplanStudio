@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { usePlanStore } from '../state/planStore';
+import { useOverlaps } from '../state/useOverlaps';
 import { formatLength } from '../lib/units';
 
 export function Sidebar() {
@@ -15,6 +16,11 @@ export function Sidebar() {
   const selectPlan = usePlanStore(s => s.selectPlan);
   const deletePlan = usePlanStore(s => s.deletePlan);
   const renamePlan = usePlanStore(s => s.renamePlan);
+  const startWall = usePlanStore(s => s.startWall);
+  const deleteWall = usePlanStore(s => s.deleteWall);
+  const clearWalls = usePlanStore(s => s.clearWalls);
+
+  const overlapping = useOverlaps();
 
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState('');
@@ -114,6 +120,63 @@ export function Sidebar() {
         )}
       </section>
 
+      {/* Walls section */}
+      <section className="p-3 border-b border-line">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="label">Walls {plan && plan.walls.length > 0 && `(${plan.walls.length})`}</h3>
+          <div className="flex gap-1">
+            <button className="btn-ghost text-xs" onClick={startWall} disabled={!plan?.imageDataUrl}>
+              + Trace
+            </button>
+            {plan && plan.walls.length > 0 && (
+              <button
+                className="btn-ghost text-xs !text-amber"
+                onClick={() => {
+                  if (confirm('Clear all walls?')) clearWalls();
+                }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+        {plan && plan.walls.length === 0 ? (
+          <p className="text-xs text-ink-muted">
+            Trace walls to catch furniture poking through them.
+          </p>
+        ) : (
+          <ul className="space-y-1 max-h-[90px] overflow-y-auto">
+            {plan?.walls.map((wall, i) => (
+              <li
+                key={wall.id}
+                className="flex items-center justify-between px-2 py-1 rounded-md text-sm hover:bg-bg-overlay group"
+              >
+                <span className="text-ink-mid">
+                  Wall {i + 1}
+                  <span className="text-ink-muted text-xs ml-1">
+                    ({wall.points.length} pts)
+                  </span>
+                </span>
+                <button
+                  className="text-ink-muted hover:text-amber text-xs opacity-0 group-hover:opacity-100"
+                  onClick={() => deleteWall(wall.id)}
+                >
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {/* Overlap warning */}
+      {overlapping.size > 0 && (
+        <div className="px-3 py-2 bg-[#e02424]/10 border-b border-[#e02424]/20 text-xs text-[#b91c1c] font-medium">
+          ⚠ {overlapping.size} {overlapping.size === 1 ? 'item overlaps' : 'items overlap'} another
+          item or a wall.
+        </div>
+      )}
+
       {/* Furniture list */}
       <section className="flex-1 overflow-hidden flex flex-col">
         <div className="p-3 pb-1">
@@ -123,29 +186,39 @@ export function Sidebar() {
           {plan?.furniture.length === 0 && (
             <li className="text-xs text-ink-muted italic">Nothing placed yet.</li>
           )}
-          {plan?.furniture.map(item => (
-            <li
-              key={item.id}
-              className={`px-2 py-1.5 rounded-md cursor-pointer text-sm border ${
-                selectedId === item.id
-                  ? 'bg-em/10 border-em/30'
-                  : 'border-transparent hover:bg-bg-overlay'
-              }`}
-              onClick={() => selectFurniture(item.id)}
-            >
-              <div className="flex items-center gap-2">
-                <span
-                  className="w-3 h-3 rounded-sm flex-shrink-0"
-                  style={{ background: item.color }}
-                />
-                <span className="font-medium truncate flex-1">{item.name}</span>
-              </div>
-              <div className="text-xs text-ink-muted ml-5">
-                {formatLength(item.widthMm, units)} × {formatLength(item.depthMm, units)}
-                {item.rotation > 0 && ` · ${item.rotation}°`}
-              </div>
-            </li>
-          ))}
+          {plan?.furniture.map(item => {
+            const overlaps = overlapping.has(item.id);
+            return (
+              <li
+                key={item.id}
+                className={`px-2 py-1.5 rounded-md cursor-pointer text-sm border ${
+                  selectedId === item.id
+                    ? 'bg-em/10 border-em/30'
+                    : overlaps
+                    ? 'border-[#e02424]/30 hover:bg-bg-overlay'
+                    : 'border-transparent hover:bg-bg-overlay'
+                }`}
+                onClick={() => selectFurniture(item.id)}
+              >
+                <div className="flex items-center gap-2">
+                  <span
+                    className="w-3 h-3 rounded-sm flex-shrink-0"
+                    style={{ background: item.color }}
+                  />
+                  <span className="font-medium truncate flex-1">{item.name}</span>
+                  {overlaps && (
+                    <span className="text-[#e02424] text-xs flex-shrink-0" title="Overlapping">
+                      ⚠
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-ink-muted ml-5">
+                  {formatLength(item.widthMm, units)} × {formatLength(item.depthMm, units)}
+                  {item.rotation > 0 && ` · ${item.rotation}°`}
+                </div>
+              </li>
+            );
+          })}
         </ul>
       </section>
 

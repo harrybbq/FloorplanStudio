@@ -11,6 +11,7 @@ export function Toolbar({ onAddFurniture }: { onAddFurniture: () => void }) {
   const setMode = usePlanStore(s => s.setMode);
   const startCalibration = usePlanStore(s => s.startCalibration);
   const clearCalibration = usePlanStore(s => s.clearCalibration);
+  const startWall = usePlanStore(s => s.startWall);
   const setPlanImage = usePlanStore(s => s.setPlanImage);
   const cancelPlacing = usePlanStore(s => s.cancelPlacing);
 
@@ -67,6 +68,15 @@ export function Toolbar({ onAddFurniture }: { onAddFurniture: () => void }) {
             Clear
           </button>
         )}
+
+        <button
+          className={`btn ${mode === 'wall' ? 'btn-active' : ''}`}
+          onClick={startWall}
+          disabled={!plan?.imageDataUrl}
+          title="Trace walls (W)"
+        >
+          Wall
+        </button>
 
         <button
           className="btn-primary"

@@ -2,9 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Stage, Layer, Image as KonvaImage, Rect, Group, Text, Line, Circle } from 'react-konva';
 import type Konva from 'konva';
 import { usePlanStore, commitCalibrationWithPoints } from '../state/planStore';
+import { useOverlaps } from '../state/useOverlaps';
 import { formatLength } from '../lib/units';
 import type { FurnitureItem, Point } from '../types';
 import { CalibrationDistanceModal } from './CalibrationDistanceModal';
+
+const OVERLAP_RED = '#e02424';
+const WALL_COLOR = '#3a3530';
 
 /**
  * The drawing surface. Owns:
@@ -29,12 +33,19 @@ export function FloorplanCanvas() {
   const placingTemplate = usePlanStore(s => s.placingTemplate);
   const imageEl = usePlanStore(s => s.imageElement);
 
+  const draftWallPoints = usePlanStore(s => s.draftWallPoints);
+
   const addCalibrationPoint = usePlanStore(s => s.addCalibrationPoint);
   const cancelPendingCalibration = usePlanStore(s => s.cancelPendingCalibration);
   const placeFurnitureAt = usePlanStore(s => s.placeFurnitureAt);
   const selectFurniture = usePlanStore(s => s.selectFurniture);
   const updateFurniture = usePlanStore(s => s.updateFurniture);
   const setImageElement = usePlanStore(s => s.setImageElement);
+  const addWallPoint = usePlanStore(s => s.addWallPoint);
+  const finishWall = usePlanStore(s => s.finishWall);
+  const cancelWall = usePlanStore(s => s.cancelWall);
+
+  const overlapping = useOverlaps();
 
   // — container size —
   const [size, setSize] = useState({ w: 800, h: 600 });
@@ -116,9 +127,18 @@ export function FloorplanCanvas() {
       return;
     }
 
+    if (mode === 'wall') {
+      addWallPoint(pt);
+      return;
+    }
+
     if (mode === 'select' && clickedEmpty) {
       selectFurniture(null);
     }
+  }
+
+  function handleStageDblClick() {
+    if (mode === 'wall') finishWall();
   }
 
   // Mouse-move ghost for calibration second point + placing preview.
@@ -174,17 +194,18 @@ export function FloorplanCanvas() {
     panState.current.active = false;
   }
 
-  // Escape to cancel pending calibration / placing.
+  // Escape to cancel pending calibration / placing / wall.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') {
         if (mode === 'calibrate') cancelPendingCalibration();
         if (mode === 'placing') usePlanStore.getState().cancelPlacing();
+        if (mode === 'wall') cancelWall();
       }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [mode, cancelPendingCalibration]);
+  }, [mode, cancelPendingCalibration, cancelWall]);
 
   const pxPerMm = plan?.calibration?.pxPerMm ?? null;
 
@@ -201,6 +222,7 @@ export function FloorplanCanvas() {
         x={view.x}
         y={view.y}
         onClick={handleStageClick}
+        onDblClick={handleStageDblClick}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
@@ -208,7 +230,7 @@ export function FloorplanCanvas() {
         onWheel={handleWheel}
         style={{
           cursor:
-            mode === 'calibrate' || mode === 'placing'
+            mode === 'calibrate' || mode === 'placing' || mode === 'wall'
               ? 'crosshair'
               : panState.current.active
               ? 'grabbing'
@@ -238,6 +260,48 @@ export function FloorplanCanvas() {
               listening={false}
               opacity={mode === 'placing' ? 0.85 : 1}
             />
+          )}
+
+          {/* Committed walls */}
+          {plan.walls.map(wall => (
+            <Line
+              key={wall.id}
+              points={wall.points.flatMap(p => [p.x, p.y])}
+              stroke={WALL_COLOR}
+              strokeWidth={5 / view.scale}
+              lineCap="round"
+              lineJoin="round"
+              listening={false}
+            />
+          ))}
+
+          {/* In-progress wall */}
+          {mode === 'wall' && draftWallPoints.length > 0 && (
+            <>
+              <Line
+                points={[
+                  ...draftWallPoints.flatMap(p => [p.x, p.y]),
+                  ...(hoverPoint ? [hoverPoint.x, hoverPoint.y] : []),
+                ]}
+                stroke={WALL_COLOR}
+                strokeWidth={5 / view.scale}
+                lineCap="round"
+                lineJoin="round"
+                dash={[10 / view.scale, 6 / view.scale]}
+                opacity={0.7}
+                listening={false}
+              />
+              {draftWallPoints.map((p, i) => (
+                <Circle
+                  key={i}
+                  x={p.x}
+                  y={p.y}
+                  radius={4 / view.scale}
+                  fill={WALL_COLOR}
+                  listening={false}
+                />
+              ))}
+            </>
           )}
 
           {/* Committed calibration line */}
@@ -284,6 +348,8 @@ export function FloorplanCanvas() {
                 pxPerMm={pxPerMm}
                 viewScale={view.scale}
                 selected={selectedId === item.id}
+                overlapping={overlapping.has(item.id)}
+                interactive={mode === 'select'}
                 onSelect={() => selectFurniture(item.id)}
                 onDragEnd={(x, y) => updateFurniture(item.id, { x, y })}
                 unitsLabel={`${formatLength(item.widthMm, units)} × ${formatLength(item.depthMm, units)}`}
@@ -378,6 +444,8 @@ function FurnitureRect({
   pxPerMm,
   viewScale,
   selected,
+  overlapping,
+  interactive,
   onSelect,
   onDragEnd,
   unitsLabel,
@@ -386,6 +454,8 @@ function FurnitureRect({
   pxPerMm: number;
   viewScale: number;
   selected: boolean;
+  overlapping: boolean;
+  interactive: boolean;
   onSelect: () => void;
   onDragEnd: (x: number, y: number) => void;
   unitsLabel: string;
@@ -395,12 +465,17 @@ function FurnitureRect({
   const labelText = `${item.name}\n${unitsLabel}`;
   const labelFont = useMemo(() => Math.max(10, Math.min(w, d) * 0.16), [w, d]);
 
+  // Overlap takes visual priority over the normal/selected stroke.
+  const strokeColor = overlapping ? OVERLAP_RED : '#1c1a17';
+  const strokeWidth = (overlapping ? 3 : selected ? 2.5 : 1) / viewScale;
+
   return (
     <Group
       x={item.x}
       y={item.y}
       rotation={item.rotation}
-      draggable
+      draggable={interactive}
+      listening={interactive}
       onClick={e => {
         e.cancelBubble = true;
         onSelect();
@@ -419,10 +494,11 @@ function FurnitureRect({
         height={d}
         offsetX={w / 2}
         offsetY={d / 2}
-        fill={item.color}
-        opacity={0.78}
-        stroke={selected ? '#1c1a17' : '#1c1a17'}
-        strokeWidth={(selected ? 2.5 : 1) / viewScale}
+        fill={overlapping ? OVERLAP_RED : item.color}
+        opacity={overlapping ? 0.5 : 0.78}
+        stroke={strokeColor}
+        strokeWidth={strokeWidth}
+        dash={overlapping ? [8 / viewScale, 4 / viewScale] : undefined}
         shadowColor="#000"
         shadowBlur={selected ? 8 : 0}
         shadowOpacity={selected ? 0.18 : 0}
