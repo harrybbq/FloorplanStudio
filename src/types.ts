@@ -14,6 +14,18 @@ export type FurnitureSource = 'manual' | 'catalog' | 'scraper' | 'llm';
 /** How much to trust those dimensions. */
 export type Confidence = 'user-entered' | 'verified' | 'estimated';
 
+/** Which corner of the bounding box is cut away to form an L. */
+export type LShapeCorner = 'tl' | 'tr' | 'bl' | 'br';
+
+/**
+ * The footprint shape of a furniture item, parameterised within its W×D
+ * bounding box. Absent / 'rect' = a plain rectangle (backward compatible).
+ * Concave shapes are decomposed into convex parts for collision (see footprint.ts).
+ */
+export type FurnitureShape =
+  | { kind: 'rect' }
+  | { kind: 'lshape'; cutCorner: LShapeCorner; armThicknessMm: number };
+
 /** A traced wall — a polyline in image pixel-space (>= 2 points). */
 export type Wall = {
   id: string;
@@ -41,6 +53,8 @@ export type FurnitureItem = {
   heightMm: number;
   /** Rotation in degrees, snapped to 15°. */
   rotation: number;
+  /** Footprint shape within the W×D box. Absent = rectangle. */
+  shape?: FurnitureShape;
   /** Where these dimensions came from — set up for future providers. */
   source: FurnitureSource;
   confidence: Confidence;
@@ -83,6 +97,7 @@ export type SavedFurniture = {
   depthMm: number;
   heightMm: number;
   color?: string;
+  shape?: FurnitureShape;
   source: FurnitureSource;
   confidence: Confidence;
 };
@@ -94,6 +109,7 @@ export type FurniturePreset = {
   widthMm: number;
   depthMm: number;
   heightMm: number;
+  shape?: FurnitureShape;
 };
 
 /** Template handed to the placement flow. Carries optional styling/provenance. */
@@ -103,6 +119,7 @@ export type PlacingTemplate = {
   depthMm: number;
   heightMm: number;
   color?: string;
+  shape?: FurnitureShape;
   source?: FurnitureSource;
   confidence?: Confidence;
 };

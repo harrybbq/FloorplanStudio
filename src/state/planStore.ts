@@ -259,6 +259,7 @@ export const usePlanStore = create<PlanState>((set, get) => ({
       depthMm: placingTemplate.depthMm,
       heightMm: placingTemplate.heightMm,
       rotation: 0,
+      shape: placingTemplate.shape,
       source: placingTemplate.source ?? 'manual',
       confidence: placingTemplate.confidence ?? 'user-entered',
       color:

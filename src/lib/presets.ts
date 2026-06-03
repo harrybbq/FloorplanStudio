@@ -26,6 +26,14 @@ export const FURNITURE_PRESETS: FurniturePreset[] = [
   { category: 'Tables', name: 'Dining (4-seat)', widthMm: 1200, depthMm: 800, heightMm: 750 },
   { category: 'Tables', name: 'Dining (6-seat)', widthMm: 1800, depthMm: 900, heightMm: 750 },
   { category: 'Tables', name: 'Desk', widthMm: 1400, depthMm: 700, heightMm: 740 },
+  {
+    category: 'Tables', name: 'L-shaped desk', widthMm: 1600, depthMm: 1200, heightMm: 740,
+    shape: { kind: 'lshape', cutCorner: 'tr', armThicknessMm: 600 },
+  },
+  {
+    category: 'Tables', name: 'Corner desk (L)', widthMm: 1400, depthMm: 1400, heightMm: 740,
+    shape: { kind: 'lshape', cutCorner: 'tl', armThicknessMm: 550 },
+  },
   { category: 'Tables', name: 'TV unit', widthMm: 1500, depthMm: 400, heightMm: 500 },
 
   // ── Storage ──

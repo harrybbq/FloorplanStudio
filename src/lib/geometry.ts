@@ -1,32 +1,30 @@
 import type { FurnitureItem, Point, Wall } from '../types';
+import { localConvexParts } from './footprint';
 
 /**
  * Collision geometry, all in image pixel-space.
  *
- * Furniture rectangles can be rotated, so axis-aligned bounding-box tests
- * aren't good enough — we use the Separating Axis Theorem (SAT) for
- * oriented box vs oriented box, and segment-vs-polygon tests for walls.
+ * Furniture can be rotated AND non-rectangular (e.g. an L), so each item's
+ * footprint is represented as one or more CONVEX polygons (its "parts").
+ * We test part-against-part with the Separating Axis Theorem (SAT) for
+ * furniture overlap, and segment-against-part for walls.
  */
 
-/** The 4 corners of a furniture rectangle, in pixel-space, accounting for rotation. */
-export function getCorners(item: FurnitureItem, pxPerMm: number): Point[] {
-  const w = item.widthMm * pxPerMm;
-  const d = item.depthMm * pxPerMm;
-  const hw = w / 2;
-  const hd = d / 2;
+/** Transform an item's convex parts from local mm space into world pixel-space. */
+export function getWorldParts(item: FurnitureItem, pxPerMm: number): Point[][] {
   const r = (item.rotation * Math.PI) / 180;
   const cos = Math.cos(r);
   const sin = Math.sin(r);
-  const local: Point[] = [
-    { x: -hw, y: -hd },
-    { x: hw, y: -hd },
-    { x: hw, y: hd },
-    { x: -hw, y: hd },
-  ];
-  return local.map(p => ({
-    x: item.x + p.x * cos - p.y * sin,
-    y: item.y + p.x * sin + p.y * cos,
-  }));
+  return localConvexParts(item.widthMm, item.depthMm, item.shape).map(part =>
+    part.map(p => {
+      const lx = p.x * pxPerMm;
+      const ly = p.y * pxPerMm;
+      return {
+        x: item.x + lx * cos - ly * sin,
+        y: item.y + lx * sin + ly * cos,
+      };
+    })
+  );
 }
 
 function project(poly: Point[], axis: Point): [number, number] {
@@ -64,6 +62,11 @@ export function convexPolysIntersect(a: Point[], b: Point[]): boolean {
   return true;
 }
 
+/** Do any convex parts of A intersect any convex parts of B? */
+function partsIntersect(a: Point[][], b: Point[][]): boolean {
+  return a.some(pa => b.some(pb => convexPolysIntersect(pa, pb)));
+}
+
 function pointInConvexPoly(pt: Point, poly: Point[]): boolean {
   let sign = 0;
   for (let i = 0; i < poly.length; i++) {
@@ -99,10 +102,14 @@ function segmentIntersectsPoly(p1: Point, p2: Point, poly: Point[]): boolean {
   return false;
 }
 
-/** Does any segment of the wall polyline touch/cross the polygon? */
-function wallIntersectsPoly(wall: Wall, poly: Point[]): boolean {
+/** Does the wall polyline touch/cross any of the item's convex parts? */
+function wallIntersectsParts(wall: Wall, parts: Point[][]): boolean {
   for (let i = 0; i < wall.points.length - 1; i++) {
-    if (segmentIntersectsPoly(wall.points[i], wall.points[i + 1], poly)) return true;
+    const p1 = wall.points[i];
+    const p2 = wall.points[i + 1];
+    for (const part of parts) {
+      if (segmentIntersectsPoly(p1, p2, part)) return true;
+    }
   }
   return false;
 }
@@ -117,12 +124,12 @@ export function computeOverlaps(
   pxPerMm: number
 ): Set<string> {
   const ids = new Set<string>();
-  const corners = furniture.map(f => getCorners(f, pxPerMm));
+  const parts = furniture.map(f => getWorldParts(f, pxPerMm));
 
   // furniture vs furniture
   for (let i = 0; i < furniture.length; i++) {
     for (let j = i + 1; j < furniture.length; j++) {
-      if (convexPolysIntersect(corners[i], corners[j])) {
+      if (partsIntersect(parts[i], parts[j])) {
         ids.add(furniture[i].id);
         ids.add(furniture[j].id);
       }
@@ -133,7 +140,7 @@ export function computeOverlaps(
   for (let i = 0; i < furniture.length; i++) {
     if (ids.has(furniture[i].id)) continue; // already flagged
     for (const wall of walls) {
-      if (wallIntersectsPoly(wall, corners[i])) {
+      if (wallIntersectsParts(wall, parts[i])) {
         ids.add(furniture[i].id);
         break;
       }

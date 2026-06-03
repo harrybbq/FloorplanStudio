@@ -4,7 +4,8 @@ import type Konva from 'konva';
 import { usePlanStore, commitCalibrationWithPoints } from '../state/planStore';
 import { useOverlaps } from '../state/useOverlaps';
 import { formatLength } from '../lib/units';
-import type { FurnitureItem, Point } from '../types';
+import { localOutline, badgeAnchor } from '../lib/footprint';
+import type { FurnitureItem, PlacingTemplate, Point } from '../types';
 import { CalibrationDistanceModal } from './CalibrationDistanceModal';
 
 const OVERLAP_RED = '#e02424';
@@ -329,14 +330,9 @@ export function FloorplanCanvas() {
             </>
           )}
 
-          {/* Placing preview (ghost rectangle following the cursor) */}
+          {/* Placing preview (ghost footprint following the cursor) */}
           {mode === 'placing' && placingTemplate && hoverPoint && pxPerMm && (
-            <PlacingGhost
-              x={hoverPoint.x}
-              y={hoverPoint.y}
-              widthPx={placingTemplate.widthMm * pxPerMm}
-              depthPx={placingTemplate.depthMm * pxPerMm}
-            />
+            <PlacingGhost x={hoverPoint.x} y={hoverPoint.y} template={placingTemplate} pxPerMm={pxPerMm} />
           )}
 
           {/* Furniture */}
@@ -413,22 +409,24 @@ function CalibrationLine({
 function PlacingGhost({
   x,
   y,
-  widthPx,
-  depthPx,
+  template,
+  pxPerMm,
 }: {
   x: number;
   y: number;
-  widthPx: number;
-  depthPx: number;
+  template: PlacingTemplate;
+  pxPerMm: number;
 }) {
+  const points = localOutline(template.widthMm, template.depthMm, template.shape).flatMap(p => [
+    p.x * pxPerMm,
+    p.y * pxPerMm,
+  ]);
   return (
-    <Rect
+    <Line
       x={x}
       y={y}
-      width={widthPx}
-      height={depthPx}
-      offsetX={widthPx / 2}
-      offsetY={depthPx / 2}
+      points={points}
+      closed
       fill="#1a7a4a"
       opacity={0.32}
       stroke="#1a7a4a"
@@ -464,6 +462,11 @@ function FurnitureRect({
   const d = item.depthMm * pxPerMm;
   const labelText = `${item.name}\n${unitsLabel}`;
   const labelFont = useMemo(() => Math.max(10, Math.min(w, d) * 0.16), [w, d]);
+  const outline = useMemo(
+    () => localOutline(item.widthMm, item.depthMm, item.shape).flatMap(p => [p.x * pxPerMm, p.y * pxPerMm]),
+    [item.widthMm, item.depthMm, item.shape, pxPerMm]
+  );
+  const anchor = badgeAnchor(item.widthMm, item.depthMm, item.shape);
 
   // Overlap takes visual priority over the normal/selected stroke.
   const strokeColor = overlapping ? OVERLAP_RED : '#1c1a17';
@@ -487,13 +490,9 @@ function FurnitureRect({
       onDragStart={() => onSelect()}
       onDragEnd={e => onDragEnd(e.target.x(), e.target.y())}
     >
-      <Rect
-        x={0}
-        y={0}
-        width={w}
-        height={d}
-        offsetX={w / 2}
-        offsetY={d / 2}
+      <Line
+        points={outline}
+        closed
         fill={overlapping ? OVERLAP_RED : item.color}
         opacity={overlapping ? 0.5 : 0.78}
         stroke={strokeColor}
@@ -516,11 +515,11 @@ function FurnitureRect({
         fill="#fdfaf3"
         listening={false}
       />
-      {/* Estimated-dimensions badge: a gold dot at the top-right corner. */}
+      {/* Estimated-dimensions badge: a gold dot at a solid corner. */}
       {item.confidence === 'estimated' && (
         <Circle
-          x={w / 2}
-          y={-d / 2}
+          x={anchor.x * pxPerMm}
+          y={anchor.y * pxPerMm}
           radius={5 / viewScale}
           fill="#c8970a"
           stroke="#fdfaf3"

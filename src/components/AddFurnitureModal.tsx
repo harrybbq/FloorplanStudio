@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { FurnitureDimensions, FurniturePreset, PlacingTemplate, SavedFurniture, UnitSystem } from '../types';
+import type { FurnitureDimensions, FurniturePreset, FurnitureShape, LShapeCorner, PlacingTemplate, SavedFurniture, UnitSystem } from '../types';
 import { formatLength, lengthPlaceholder, parseLength } from '../lib/units';
 import { FURNITURE_PRESETS, PRESET_CATEGORIES } from '../lib/presets';
 import { defaultRegistry } from '../lib/furniture/providers';
@@ -121,12 +121,15 @@ function CustomTab({
   units: UnitSystem;
   initialName?: string;
   onPlace: (t: PlacingTemplate) => void;
-  onSaveToLibrary: (item: { name: string; widthMm: number; depthMm: number; heightMm: number }) => void;
+  onSaveToLibrary: (item: { name: string; widthMm: number; depthMm: number; heightMm: number; shape?: FurnitureShape }) => void;
 }) {
   const [name, setName] = useState(initialName);
   const [width, setWidth] = useState('');
   const [depth, setDepth] = useState('');
   const [height, setHeight] = useState('');
+  const [shapeKind, setShapeKind] = useState<'rect' | 'lshape'>('rect');
+  const [cutCorner, setCutCorner] = useState<LShapeCorner>('tr');
+  const [arm, setArm] = useState('');
   const [saveToLib, setSaveToLib] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const nameRef = useRef<HTMLInputElement | null>(null);
@@ -143,7 +146,16 @@ function CustomTab({
     if (w === null || w <= 0) return setError('Width is required (e.g. 1500 or 1.5m).');
     if (d === null || d <= 0) return setError('Depth is required.');
     if (h === null) return setError("Couldn't read the height.");
-    const data = { name: name.trim(), widthMm: w, depthMm: d, heightMm: h };
+
+    let shape: FurnitureShape | undefined;
+    if (shapeKind === 'lshape') {
+      const a = parseLength(arm, units);
+      if (a === null || a <= 0) return setError('Enter the L arm thickness.');
+      if (a >= Math.min(w, d)) return setError('Arm thickness must be less than both width and depth.');
+      shape = { kind: 'lshape', cutCorner, armThicknessMm: a };
+    }
+
+    const data = { name: name.trim(), widthMm: w, depthMm: d, heightMm: h, shape };
     if (saveToLib) onSaveToLibrary(data);
     onPlace(data);
   }
@@ -176,6 +188,43 @@ function CustomTab({
           <input className="input" placeholder="optional" value={height} onChange={e => setHeight(e.target.value)} />
         </div>
       </div>
+
+      <div>
+        <label className="label block mb-1">Shape</label>
+        <div className="flex gap-1">
+          {(['rect', 'lshape'] as const).map(k => (
+            <button
+              key={k}
+              type="button"
+              className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
+                shapeKind === k ? 'bg-em text-white border-em' : 'border-line text-ink-mid hover:bg-bg-overlay'
+              }`}
+              onClick={() => setShapeKind(k)}
+            >
+              {k === 'rect' ? 'Rectangle' : 'L-shape'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {shapeKind === 'lshape' && (
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="label block mb-1">Cut corner</label>
+            <select className="input" value={cutCorner} onChange={e => setCutCorner(e.target.value as LShapeCorner)}>
+              <option value="tr">Top-right</option>
+              <option value="tl">Top-left</option>
+              <option value="br">Bottom-right</option>
+              <option value="bl">Bottom-left</option>
+            </select>
+          </div>
+          <div>
+            <label className="label block mb-1">Arm thickness</label>
+            <input className="input" placeholder={lengthPlaceholder(units)} value={arm} onChange={e => setArm(e.target.value)} />
+          </div>
+        </div>
+      )}
+
       {error && <p className="text-xs text-amber">{error}</p>}
       <label className="flex items-center gap-2 text-sm text-ink-mid cursor-pointer select-none">
         <input type="checkbox" checked={saveToLib} onChange={e => setSaveToLib(e.target.checked)} />

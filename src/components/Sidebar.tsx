@@ -216,6 +216,7 @@ export function Sidebar() {
                 <div className="text-xs text-ink-muted ml-5 flex items-center gap-1 flex-wrap">
                   <span>
                     {formatLength(item.widthMm, units)} × {formatLength(item.depthMm, units)}
+                    {item.shape?.kind === 'lshape' && ' · L'}
                     {item.rotation > 0 && ` · ${item.rotation}°`}
                   </span>
                   {item.confidence !== 'user-entered' && (
