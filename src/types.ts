@@ -8,6 +8,12 @@ export type Mode = 'select' | 'calibrate' | 'placing' | 'wall';
 
 export type Point = { x: number; y: number };
 
+/** Where a furniture item's dimensions came from. */
+export type FurnitureSource = 'manual' | 'catalog' | 'scraper' | 'llm';
+
+/** How much to trust those dimensions. */
+export type Confidence = 'user-entered' | 'verified' | 'estimated';
+
 /** A traced wall — a polyline in image pixel-space (>= 2 points). */
 export type Wall = {
   id: string;
@@ -36,8 +42,8 @@ export type FurnitureItem = {
   /** Rotation in degrees, snapped to 15°. */
   rotation: number;
   /** Where these dimensions came from — set up for future providers. */
-  source: 'manual' | 'scraper' | 'llm';
-  confidence: 'user-entered' | 'verified' | 'estimated';
+  source: FurnitureSource;
+  confidence: Confidence;
   /** Tailwind / hex colour used for the rectangle fill. */
   color: string;
 };
@@ -65,8 +71,8 @@ export type FurnitureDimensions = {
   widthMm: number;
   depthMm: number;
   heightMm: number;
-  source: 'manual' | 'scraper' | 'llm';
-  confidence: 'user-entered' | 'verified' | 'estimated';
+  source: FurnitureSource;
+  confidence: Confidence;
 };
 
 /** A reusable furniture definition saved to the cross-plan library. */
@@ -77,8 +83,8 @@ export type SavedFurniture = {
   depthMm: number;
   heightMm: number;
   color?: string;
-  source: 'manual' | 'scraper' | 'llm';
-  confidence: 'user-entered' | 'verified' | 'estimated';
+  source: FurnitureSource;
+  confidence: Confidence;
 };
 
 /** A built-in furniture preset (standard dimensions). */
@@ -97,6 +103,6 @@ export type PlacingTemplate = {
   depthMm: number;
   heightMm: number;
   color?: string;
-  source?: 'manual' | 'scraper' | 'llm';
-  confidence?: 'user-entered' | 'verified' | 'estimated';
+  source?: FurnitureSource;
+  confidence?: Confidence;
 };

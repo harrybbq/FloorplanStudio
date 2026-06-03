@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { FurniturePreset, PlacingTemplate, SavedFurniture, UnitSystem } from '../types';
+import type { FurnitureDimensions, FurniturePreset, PlacingTemplate, SavedFurniture, UnitSystem } from '../types';
 import { formatLength, lengthPlaceholder, parseLength } from '../lib/units';
 import { FURNITURE_PRESETS, PRESET_CATEGORIES } from '../lib/presets';
+import { defaultRegistry } from '../lib/furniture/providers';
 import { usePlanStore } from '../state/planStore';
+import { ConfirmDimensionsModal } from './ConfirmDimensionsModal';
 
-type Tab = 'custom' | 'presets' | 'library';
+type Tab = 'custom' | 'presets' | 'lookup' | 'library';
 
 /**
  * Unified "add furniture" surface. Three sources, one placement flow:
@@ -23,6 +25,8 @@ export function AddFurnitureModal({
   onClose: () => void;
 }) {
   const [tab, setTab] = useState<Tab>('custom');
+  const [confirming, setConfirming] = useState<FurnitureDimensions | null>(null);
+  const [prefillName, setPrefillName] = useState('');
   const library = usePlanStore(s => s.library);
   const beginPlacing = usePlanStore(s => s.beginPlacing);
   const addToLibrary = usePlanStore(s => s.addToLibrary);
@@ -39,7 +43,7 @@ export function AddFurnitureModal({
         <div className="p-5 pb-0">
           <h2 className="font-display text-lg mb-3">Add furniture</h2>
           <div className="flex gap-1 border-b border-line">
-            {(['custom', 'presets', 'library'] as Tab[]).map(t => (
+            {(['custom', 'presets', 'lookup', 'library'] as Tab[]).map(t => (
               <button
                 key={t}
                 className={`px-3 py-2 text-sm font-medium capitalize -mb-px border-b-2 transition-colors ${
@@ -62,11 +66,21 @@ export function AddFurnitureModal({
           {tab === 'custom' && (
             <CustomTab
               units={units}
+              initialName={prefillName}
               onPlace={place}
               onSaveToLibrary={item => addToLibrary({ ...item, source: 'manual', confidence: 'user-entered' })}
             />
           )}
           {tab === 'presets' && <PresetsTab units={units} onPlace={place} onSaveToLibrary={addToLibrary} />}
+          {tab === 'lookup' && (
+            <LookupTab
+              onResult={setConfirming}
+              onManual={q => {
+                setPrefillName(q);
+                setTab('custom');
+              }}
+            />
+          )}
           {tab === 'library' && (
             <LibraryTab
               units={units}
@@ -83,6 +97,15 @@ export function AddFurnitureModal({
           </button>
         </div>
       </div>
+
+      {confirming && (
+        <ConfirmDimensionsModal
+          result={confirming}
+          units={units}
+          onCancel={() => setConfirming(null)}
+          onConfirm={template => place(template)}
+        />
+      )}
     </div>
   );
 }
@@ -91,14 +114,16 @@ export function AddFurnitureModal({
 
 function CustomTab({
   units,
+  initialName = '',
   onPlace,
   onSaveToLibrary,
 }: {
   units: UnitSystem;
+  initialName?: string;
   onPlace: (t: PlacingTemplate) => void;
   onSaveToLibrary: (item: { name: string; widthMm: number; depthMm: number; heightMm: number }) => void;
 }) {
-  const [name, setName] = useState('');
+  const [name, setName] = useState(initialName);
   const [width, setWidth] = useState('');
   const [depth, setDepth] = useState('');
   const [height, setHeight] = useState('');
@@ -234,7 +259,7 @@ function PresetRow({
 }) {
   return (
     <li className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-bg-overlay group">
-      <button className="flex-1 text-left" onClick={() => onPlace(preset)}>
+      <button className="flex-1 text-left" onClick={() => onPlace({ ...preset, confidence: 'verified' })}>
         <div className="text-sm font-medium">{preset.name}</div>
         <div className="text-xs text-ink-muted">
           {formatLength(preset.widthMm, units)} × {formatLength(preset.depthMm, units)}
@@ -243,14 +268,89 @@ function PresetRow({
       <button
         className="btn-ghost text-xs opacity-0 group-hover:opacity-100"
         title="Save to library"
-        onClick={() => onSaveToLibrary({ ...preset, source: 'manual', confidence: 'user-entered' })}
+        onClick={() => onSaveToLibrary({ ...preset, source: 'manual', confidence: 'verified' })}
       >
         + lib
       </button>
-      <button className="btn-primary !px-2 !py-1 text-xs" onClick={() => onPlace(preset)}>
+      <button className="btn-primary !px-2 !py-1 text-xs" onClick={() => onPlace({ ...preset, confidence: 'verified' })}>
         Place
       </button>
     </li>
+  );
+}
+
+/* ── Lookup ──────────────────────────────────────────────────────────── */
+
+function LookupTab({
+  onResult,
+  onManual,
+}: {
+  onResult: (dims: FurnitureDimensions) => void;
+  onManual: (query: string) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [noMatch, setNoMatch] = useState(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  async function search() {
+    const q = query.trim();
+    if (!q) return;
+    setLoading(true);
+    setNoMatch(false);
+    const result = await defaultRegistry.lookup(q);
+    setLoading(false);
+    if (result) onResult(result);
+    else setNoMatch(true);
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-ink-mid">
+        Type a product name to look up its dimensions. A match opens a confirm step before placing.
+      </p>
+      <div className="flex gap-2">
+        <input
+          ref={inputRef}
+          className="input"
+          placeholder="e.g. IKEA Billy bookcase"
+          value={query}
+          onChange={e => {
+            setQuery(e.target.value);
+            setNoMatch(false);
+          }}
+          onKeyDown={e => e.key === 'Enter' && search()}
+        />
+        <button
+          className="btn-primary whitespace-nowrap"
+          onClick={search}
+          disabled={loading || !query.trim()}
+        >
+          {loading ? 'Searching…' : 'Search'}
+        </button>
+      </div>
+
+      {noMatch && !loading && (
+        <div className="rounded-md border border-line bg-bg-overlay/50 p-3 text-sm">
+          <p className="text-ink-mid mb-2">
+            No automatic match for “{query.trim()}”. Online lookup (AI / web) isn’t enabled in this
+            build — you can enter the dimensions yourself.
+          </p>
+          <button className="btn" onClick={() => onManual(query.trim())}>
+            Enter manually
+          </button>
+        </div>
+      )}
+
+      <p className="text-xs text-ink-muted">
+        Built-in sample matches: Billy, Kallax, Malm, Ektorp, Poäng, Lack, Hemnes, Brimnes. Richer
+        lookup (AI / web) drops in here once a backend endpoint is configured.
+      </p>
+    </div>
   );
 }
 

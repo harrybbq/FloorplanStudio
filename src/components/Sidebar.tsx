@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { usePlanStore } from '../state/planStore';
 import { useOverlaps } from '../state/useOverlaps';
 import { formatLength } from '../lib/units';
+import { confidenceMeta, sourceLabel } from '../lib/furniture/provenance';
 
 export function Sidebar() {
   const plans = usePlanStore(s => s.plans);
@@ -212,9 +213,24 @@ export function Sidebar() {
                     </span>
                   )}
                 </div>
-                <div className="text-xs text-ink-muted ml-5">
-                  {formatLength(item.widthMm, units)} × {formatLength(item.depthMm, units)}
-                  {item.rotation > 0 && ` · ${item.rotation}°`}
+                <div className="text-xs text-ink-muted ml-5 flex items-center gap-1 flex-wrap">
+                  <span>
+                    {formatLength(item.widthMm, units)} × {formatLength(item.depthMm, units)}
+                    {item.rotation > 0 && ` · ${item.rotation}°`}
+                  </span>
+                  {item.confidence !== 'user-entered' && (
+                    <span
+                      className="inline-flex items-center gap-1"
+                      title={`${sourceLabel(item.source)} · ${confidenceMeta(item.confidence).label}`}
+                    >
+                      ·
+                      <span
+                        className="w-1.5 h-1.5 rounded-full"
+                        style={{ background: confidenceMeta(item.confidence).dot }}
+                      />
+                      {confidenceMeta(item.confidence).label}
+                    </span>
+                  )}
                 </div>
               </li>
             );
@@ -225,7 +241,14 @@ export function Sidebar() {
       {/* Selected item controls */}
       {selected && (
         <section className="p-3 border-t border-line bg-bg-overlay/40">
-          <h3 className="label mb-2">Selected: {selected.name}</h3>
+          <h3 className="label mb-1">Selected: {selected.name}</h3>
+          <div className="flex items-center gap-1.5 mb-2 text-xs text-ink-mid">
+            <span
+              className="w-2 h-2 rounded-full"
+              style={{ background: confidenceMeta(selected.confidence).dot }}
+            />
+            {confidenceMeta(selected.confidence).label} · {sourceLabel(selected.source)}
+          </div>
           <div className="flex gap-1.5">
             <button className="btn flex-1" onClick={() => rotateFurniture(selected.id, -15)}>
               ↺ 15°

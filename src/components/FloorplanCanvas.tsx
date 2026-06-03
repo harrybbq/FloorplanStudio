@@ -516,6 +516,18 @@ function FurnitureRect({
         fill="#fdfaf3"
         listening={false}
       />
+      {/* Estimated-dimensions badge: a gold dot at the top-right corner. */}
+      {item.confidence === 'estimated' && (
+        <Circle
+          x={w / 2}
+          y={-d / 2}
+          radius={5 / viewScale}
+          fill="#c8970a"
+          stroke="#fdfaf3"
+          strokeWidth={1.5 / viewScale}
+          listening={false}
+        />
+      )}
     </Group>
   );
 }
