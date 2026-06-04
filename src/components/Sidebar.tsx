@@ -217,6 +217,7 @@ export function Sidebar() {
                   <span>
                     {formatLength(item.widthMm, units)} × {formatLength(item.depthMm, units)}
                     {item.shape?.kind === 'lshape' && ' · L'}
+                    {item.shape?.kind === 'polygon' && ' · custom'}
                     {item.rotation > 0 && ` · ${item.rotation}°`}
                   </span>
                   {item.confidence !== 'user-entered' && (

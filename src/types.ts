@@ -24,7 +24,10 @@ export type LShapeCorner = 'tl' | 'tr' | 'bl' | 'br';
  */
 export type FurnitureShape =
   | { kind: 'rect' }
-  | { kind: 'lshape'; cutCorner: LShapeCorner; armThicknessMm: number };
+  | { kind: 'lshape'; cutCorner: LShapeCorner; armThicknessMm: number }
+  /** Arbitrary footprint drawn in the Furniture Maker. Points are centred mm,
+   *  in order around the outline. Concave allowed (triangulated for collision). */
+  | { kind: 'polygon'; points: Point[] };
 
 /** A traced wall — a polyline in image pixel-space (>= 2 points). */
 export type Wall = {

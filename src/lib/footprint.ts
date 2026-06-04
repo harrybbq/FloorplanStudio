@@ -32,6 +32,7 @@ export function localOutline(widthMm: number, depthMm: number, shape?: Furniture
   const hw = widthMm / 2;
   const hd = depthMm / 2;
   if (!shape || shape.kind === 'rect') return rectCorners(hw, hd);
+  if (shape.kind === 'polygon') return shape.points;
 
   const t = clampArm(shape.armThicknessMm, widthMm, depthMm);
   switch (shape.cutCorner) {
@@ -63,6 +64,10 @@ export function localConvexParts(widthMm: number, depthMm: number, shape?: Furni
   const hw = widthMm / 2;
   const hd = depthMm / 2;
   if (!shape || shape.kind === 'rect') return [rectCorners(hw, hd)];
+  if (shape.kind === 'polygon') {
+    const tris = triangulate(shape.points);
+    return tris.length > 0 ? tris : [boundingRect(shape.points)];
+  }
 
   const t = clampArm(shape.armThicknessMm, widthMm, depthMm);
   const cutRight = shape.cutCorner === 'tr' || shape.cutCorner === 'br';
@@ -90,8 +95,88 @@ export function badgeAnchor(widthMm: number, depthMm: number, shape?: FurnitureS
   const hw = widthMm / 2;
   const hd = depthMm / 2;
   if (!shape || shape.kind === 'rect') return { x: hw, y: -hd };
+  if (shape.kind === 'polygon') {
+    // The vertex nearest the top-right is always on the boundary (solid).
+    return shape.points.reduce((best, p) => (p.x - p.y > best.x - best.y ? p : best), shape.points[0]);
+  }
   // The corner diagonally opposite the cut is always solid.
   const cutRight = shape.cutCorner === 'tr' || shape.cutCorner === 'br';
   const cutTop = shape.cutCorner === 'tl' || shape.cutCorner === 'tr';
   return { x: cutRight ? -hw : hw, y: cutTop ? hd : -hd };
+}
+
+/* ── Polygon helpers ─────────────────────────────────────────────────── */
+
+function boundingRect(points: Point[]): Point[] {
+  const xs = points.map(p => p.x);
+  const ys = points.map(p => p.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  return [
+    { x: minX, y: minY }, { x: maxX, y: minY }, { x: maxX, y: maxY }, { x: minX, y: maxY },
+  ];
+}
+
+function signedArea(poly: Point[]): number {
+  let a = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i];
+    const q = poly[(i + 1) % poly.length];
+    a += p.x * q.y - q.x * p.y;
+  }
+  return a / 2;
+}
+
+function pointInTriangle(p: Point, a: Point, b: Point, c: Point): boolean {
+  const d1 = (p.x - b.x) * (a.y - b.y) - (a.x - b.x) * (p.y - b.y);
+  const d2 = (p.x - c.x) * (b.y - c.y) - (b.x - c.x) * (p.y - c.y);
+  const d3 = (p.x - a.x) * (c.y - a.y) - (c.x - a.x) * (p.y - a.y);
+  const hasNeg = d1 < 0 || d2 < 0 || d3 < 0;
+  const hasPos = d1 > 0 || d2 > 0 || d3 > 0;
+  return !(hasNeg && hasPos);
+}
+
+/**
+ * Ear-clipping triangulation of a simple polygon → list of triangles (each
+ * a convex 3-point polygon). Returns [] if the polygon is degenerate; callers
+ * fall back to the bounding rectangle so collision still works coarsely.
+ */
+function triangulate(input: Point[]): Point[][] {
+  if (input.length < 3) return [];
+  const poly = input.slice();
+  if (signedArea(poly) < 0) poly.reverse(); // normalise to CCW
+
+  const idx = poly.map((_, i) => i);
+  const tris: Point[][] = [];
+  let guard = 0;
+
+  while (idx.length > 3 && guard++ < 5000) {
+    let clipped = false;
+    for (let i = 0; i < idx.length; i++) {
+      const a = poly[idx[(i - 1 + idx.length) % idx.length]];
+      const b = poly[idx[i]];
+      const c = poly[idx[(i + 1) % idx.length]];
+      // Convex (CCW) vertex?
+      const cross = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+      if (cross <= 0) continue; // reflex or collinear — not an ear
+      // No other vertex inside triangle a-b-c?
+      let contains = false;
+      for (let j = 0; j < idx.length; j++) {
+        const q = poly[idx[j]];
+        if (q === a || q === b || q === c) continue;
+        if (pointInTriangle(q, a, b, c)) {
+          contains = true;
+          break;
+        }
+      }
+      if (contains) continue;
+      tris.push([a, b, c]);
+      idx.splice(i, 1);
+      clipped = true;
+      break;
+    }
+    if (!clipped) return []; // degenerate / self-intersecting — bail
+  }
+  if (idx.length === 3) tris.push([poly[idx[0]], poly[idx[1]], poly[idx[2]]]);
+  return tris;
 }

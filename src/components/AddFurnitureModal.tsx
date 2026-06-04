@@ -5,8 +5,9 @@ import { FURNITURE_PRESETS, PRESET_CATEGORIES } from '../lib/presets';
 import { defaultRegistry } from '../lib/furniture/providers';
 import { usePlanStore } from '../state/planStore';
 import { ConfirmDimensionsModal } from './ConfirmDimensionsModal';
+import { MakerTab } from './MakerTab';
 
-type Tab = 'custom' | 'presets' | 'lookup' | 'library';
+type Tab = 'custom' | 'presets' | 'maker' | 'lookup' | 'library';
 
 /**
  * Unified "add furniture" surface. Three sources, one placement flow:
@@ -43,7 +44,7 @@ export function AddFurnitureModal({
         <div className="p-5 pb-0">
           <h2 className="font-display text-lg mb-3">Add furniture</h2>
           <div className="flex gap-1 border-b border-line">
-            {(['custom', 'presets', 'lookup', 'library'] as Tab[]).map(t => (
+            {(['custom', 'presets', 'maker', 'lookup', 'library'] as Tab[]).map(t => (
               <button
                 key={t}
                 className={`px-3 py-2 text-sm font-medium capitalize -mb-px border-b-2 transition-colors ${
@@ -72,6 +73,13 @@ export function AddFurnitureModal({
             />
           )}
           {tab === 'presets' && <PresetsTab units={units} onPlace={place} onSaveToLibrary={addToLibrary} />}
+          {tab === 'maker' && (
+            <MakerTab
+              units={units}
+              onPlace={place}
+              onSaveToLibrary={item => addToLibrary({ ...item, source: 'manual', confidence: 'user-entered' })}
+            />
+          )}
           {tab === 'lookup' && (
             <LookupTab
               onResult={setConfirming}
@@ -396,8 +404,9 @@ function LookupTab({
       )}
 
       <p className="text-xs text-ink-muted">
-        Built-in sample matches: Billy, Kallax, Malm, Ektorp, Poäng, Lack, Hemnes, Brimnes. Richer
-        lookup (AI / web) drops in here once a backend endpoint is configured.
+        Built-in IKEA catalog (~30 items): Billy, Kallax, Malm, Hemnes, Pax, Ektorp, Kivik, Poäng,
+        Lack, Lisabo, Micke, Bekant, Markus… Dimensions are approximate — confirm before placing.
+        Unlimited lookup (AI / web) drops in here once a backend endpoint is configured.
       </p>
     </div>
   );

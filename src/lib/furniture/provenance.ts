@@ -21,7 +21,7 @@ export function sourceLabel(source: FurnitureSource): string {
     case 'scraper':
       return 'Web lookup';
     case 'catalog':
-      return 'Sample catalog';
+      return 'Catalog';
     case 'manual':
     default:
       return 'Manual';
