@@ -1,4 +1,4 @@
-import type { FurnitureShape, Point } from '../types';
+import type { FurnitureShape, LShapeCorner, Point } from '../types';
 
 /**
  * Furniture footprint geometry, in LOCAL millimetre space centred on the item's
@@ -103,6 +103,16 @@ export function badgeAnchor(widthMm: number, depthMm: number, shape?: FurnitureS
   const cutRight = shape.cutCorner === 'tr' || shape.cutCorner === 'br';
   const cutTop = shape.cutCorner === 'tl' || shape.cutCorner === 'tr';
   return { x: cutRight ? -hw : hw, y: cutTop ? hd : -hd };
+}
+
+/** Mirror a shape horizontally (x → -x) in its own local frame. */
+export function flipShapeX(shape?: FurnitureShape): FurnitureShape | undefined {
+  if (!shape || shape.kind === 'rect') return shape; // a rectangle mirrors to itself
+  if (shape.kind === 'lshape') {
+    const mirror: Record<LShapeCorner, LShapeCorner> = { tl: 'tr', tr: 'tl', bl: 'br', br: 'bl' };
+    return { ...shape, cutCorner: mirror[shape.cutCorner] };
+  }
+  return { kind: 'polygon', points: shape.points.map(p => ({ x: -p.x, y: p.y })) };
 }
 
 /* ── Polygon helpers ─────────────────────────────────────────────────── */

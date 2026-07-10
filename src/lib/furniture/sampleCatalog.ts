@@ -1,11 +1,12 @@
 /**
- * A built-in starter catalog of common IKEA products, used by SampleProvider so
- * the lookup flow works offline with no backend.
+ * A built-in starter catalog of common UK home-furniture products (IKEA, B&Q,
+ * Tesco), used by SampleProvider so the lookup flow works offline with no backend.
  *
- * Dimensions are APPROXIMATE (rounded, from public spec sheets) and returned
- * with confidence 'estimated' — the confirm step lets the user correct them.
- * This is a curated starter set, not exhaustive. Unlimited coverage is the job
- * of LLMProvider / ScraperProvider once a backend endpoint is configured.
+ * Dimensions are APPROXIMATE — rounded/generic for the product category, not
+ * scraped from live spec sheets — and returned with confidence 'estimated' so
+ * the confirm step prompts the user to verify. This is a curated starter set,
+ * not exhaustive. Unlimited/accurate coverage is the job of LLMProvider /
+ * ScraperProvider once a backend endpoint is configured.
  */
 export type CatalogEntry = {
   name: string;
@@ -56,6 +57,22 @@ export const SAMPLE_CATALOG: CatalogEntry[] = [
   { name: 'IKEA Bekant desk', widthMm: 1600, depthMm: 800, heightMm: 740, aliases: ['bekant'] },
   { name: 'IKEA Markus office chair', widthMm: 620, depthMm: 620, heightMm: 1290, aliases: ['markus'] },
   { name: 'IKEA Hemnes shoe cabinet', widthMm: 890, depthMm: 300, heightMm: 1270, aliases: ['hemnes shoe', 'shoe cabinet'] },
+
+  // ── B&Q (own brands: GoodHome, Form) — approximate/generic ──
+  { name: 'B&Q GoodHome kitchen base cabinet (600)', widthMm: 600, depthMm: 580, heightMm: 720, aliases: ['goodhome base', 'b&q base cabinet', 'b&q kitchen cabinet'] },
+  { name: 'B&Q GoodHome Atomia wardrobe', widthMm: 1000, depthMm: 580, heightMm: 1875, aliases: ['atomia', 'goodhome atomia'] },
+  { name: 'B&Q Form Darwin wardrobe (2-door)', widthMm: 1000, depthMm: 560, heightMm: 1800, aliases: ['form darwin', 'darwin wardrobe', 'b&q wardrobe'] },
+  { name: 'B&Q Form Mixxit shelving unit', widthMm: 640, depthMm: 330, heightMm: 1800, aliases: ['form mixxit', 'mixxit', 'b&q shelving'] },
+  { name: 'B&Q Form Konnect storage cube', widthMm: 320, depthMm: 320, heightMm: 320, aliases: ['form konnect', 'konnect cube', 'storage cube', 'b&q cube'] },
+  { name: 'B&Q Form Oppen wall shelf', widthMm: 800, depthMm: 300, heightMm: 250, aliases: ['form oppen', 'oppen shelf'] },
+
+  // ── Tesco (Tesco Home / Fox & Ivy / F&F) — approximate/generic ──
+  { name: 'Tesco Fox & Ivy wardrobe (2-door)', widthMm: 900, depthMm: 520, heightMm: 1800, aliases: ['tesco wardrobe', 'fox & ivy wardrobe', 'f&f wardrobe'] },
+  { name: 'Tesco 3-drawer bedside chest', widthMm: 450, depthMm: 400, heightMm: 550, aliases: ['tesco bedside', 'tesco chest'] },
+  { name: 'Tesco 2-seater sofa', widthMm: 1600, depthMm: 850, heightMm: 850, aliases: ['tesco sofa'] },
+  { name: 'Tesco dining table (4-seat)', widthMm: 1200, depthMm: 750, heightMm: 750, aliases: ['tesco dining', 'tesco table'] },
+  { name: 'Tesco bookcase (5-shelf)', widthMm: 700, depthMm: 300, heightMm: 1800, aliases: ['tesco bookcase'] },
+  { name: 'Tesco ottoman storage bed (double)', widthMm: 1500, depthMm: 2000, heightMm: 1000, aliases: ['tesco ottoman', 'tesco bed'] },
 ];
 
 /** Normalize a query for matching: lowercase, collapse whitespace. */

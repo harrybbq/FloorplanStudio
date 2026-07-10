@@ -13,6 +13,7 @@ export function Toolbar({ onAddFurniture }: { onAddFurniture: () => void }) {
   const clearCalibration = usePlanStore(s => s.clearCalibration);
   const startWall = usePlanStore(s => s.startWall);
   const setPlanImage = usePlanStore(s => s.setPlanImage);
+  const clearPlanImage = usePlanStore(s => s.clearPlanImage);
   const cancelPlacing = usePlanStore(s => s.cancelPlacing);
 
   function handleFile(file: File) {
@@ -103,6 +104,19 @@ export function Toolbar({ onAddFurniture }: { onAddFurniture: () => void }) {
         <button className="btn" onClick={() => fileRef.current?.click()}>
           {plan?.imageDataUrl ? 'Replace image' : 'Upload image'}
         </button>
+
+        {plan?.imageDataUrl && (
+          <button
+            className="btn !text-amber !border-amber/30 hover:!bg-amber/10"
+            onClick={() => {
+              if (confirm('Delete the floorplan image? Furniture stays, but the backdrop and scale are removed.')) {
+                clearPlanImage();
+              }
+            }}
+          >
+            Delete image
+          </button>
+        )}
 
         <div className="flex items-center rounded-md border border-line overflow-hidden">
           <button

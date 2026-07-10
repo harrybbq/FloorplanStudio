@@ -13,6 +13,7 @@ export function Sidebar() {
   const selectFurniture = usePlanStore(s => s.selectFurniture);
   const deleteFurniture = usePlanStore(s => s.deleteFurniture);
   const rotateFurniture = usePlanStore(s => s.rotateFurniture);
+  const flipFurniture = usePlanStore(s => s.flipFurniture);
   const createPlan = usePlanStore(s => s.createPlan);
   const selectPlan = usePlanStore(s => s.selectPlan);
   const deletePlan = usePlanStore(s => s.deletePlan);
@@ -257,6 +258,9 @@ export function Sidebar() {
             </button>
             <button className="btn flex-1" onClick={() => rotateFurniture(selected.id, 15)}>
               ↻ 15°
+            </button>
+            <button className="btn flex-1" onClick={() => flipFurniture(selected.id)} title="Flip horizontally (F)">
+              ⇋ Flip
             </button>
           </div>
           <button

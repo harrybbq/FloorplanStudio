@@ -404,9 +404,9 @@ function LookupTab({
       )}
 
       <p className="text-xs text-ink-muted">
-        Built-in IKEA catalog (~30 items): Billy, Kallax, Malm, Hemnes, Pax, Ektorp, Kivik, Poäng,
-        Lack, Lisabo, Micke, Bekant, Markus… Dimensions are approximate — confirm before placing.
-        Unlimited lookup (AI / web) drops in here once a backend endpoint is configured.
+        Built-in catalog (~40 items) across IKEA, B&amp;Q and Tesco — e.g. Billy, Kallax, Malm, Pax,
+        Ektorp, Poäng, Form Darwin, GoodHome, Fox &amp; Ivy wardrobe, Tesco sofa. Dimensions are
+        approximate — confirm before placing. Unlimited lookup (AI / web) drops in with a backend.
       </p>
     </div>
   );

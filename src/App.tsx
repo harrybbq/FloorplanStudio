@@ -14,6 +14,7 @@ export default function App() {
   const draftWallCount = usePlanStore(s => s.draftWallPoints.length);
   const deleteFurniture = usePlanStore(s => s.deleteFurniture);
   const rotateFurniture = usePlanStore(s => s.rotateFurniture);
+  const flipFurniture = usePlanStore(s => s.flipFurniture);
   const startCalibration = usePlanStore(s => s.startCalibration);
   const startWall = usePlanStore(s => s.startWall);
   const finishWall = usePlanStore(s => s.finishWall);
@@ -51,11 +52,13 @@ export default function App() {
         deleteFurniture(selectedId);
       } else if ((e.key === 'r' || e.key === 'R') && selectedId) {
         rotateFurniture(selectedId, e.shiftKey ? -15 : 15);
+      } else if ((e.key === 'f' || e.key === 'F') && selectedId) {
+        flipFurniture(selectedId);
       }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [mode, plan?.imageDataUrl, plan?.calibration, selectedId, setMode, cancelPlacing, cancelWall, startCalibration, startWall, finishWall, deleteFurniture, rotateFurniture]);
+  }, [mode, plan?.imageDataUrl, plan?.calibration, selectedId, setMode, cancelPlacing, cancelWall, startCalibration, startWall, finishWall, deleteFurniture, rotateFurniture, flipFurniture]);
 
   const showCanvas = !!plan?.imageDataUrl;
 

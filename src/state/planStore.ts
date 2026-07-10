@@ -20,6 +20,7 @@ import {
   savePlans,
   saveUnits,
 } from '../lib/storage';
+import { flipShapeX } from '../lib/footprint';
 
 const FURNITURE_COLORS = [
   '#c8970a', // gold
@@ -81,6 +82,7 @@ interface PlanState {
 
   // — image —
   setPlanImage: (dataUrl: string, width: number, height: number) => void;
+  clearPlanImage: () => void;
 
   // — calibration —
   // Canvas flow: setMode('calibrate') → first click stores pendingCalibrationPoint →
@@ -97,6 +99,7 @@ interface PlanState {
   updateFurniture: (id: string, patch: Partial<FurnitureItem>) => void;
   deleteFurniture: (id: string) => void;
   rotateFurniture: (id: string, deltaDeg: number) => void;
+  flipFurniture: (id: string) => void;
   selectFurniture: (id: string | null) => void;
 
   // — walls —
@@ -217,6 +220,19 @@ export const usePlanStore = create<PlanState>((set, get) => ({
     set({ plans: updated });
   },
 
+  clearPlanImage: () => {
+    const { plans, activePlanId } = get();
+    if (!activePlanId) return;
+    // Remove the backdrop + scale (calibration is image-relative). Furniture/walls stay.
+    const updated = plans.map(p =>
+      p.id === activePlanId
+        ? { ...p, imageDataUrl: null, imageWidth: 0, imageHeight: 0, calibration: null, updatedAt: Date.now() }
+        : p
+    );
+    savePlans(updated);
+    set({ plans: updated, imageElement: null, mode: 'select', selectedFurnitureId: null });
+  },
+
   startCalibration: () => {
     set({ mode: 'calibrate', pendingCalibrationPoint: null, selectedFurnitureId: null });
   },
@@ -320,6 +336,24 @@ export const usePlanStore = create<PlanState>((set, get) => ({
             ...p,
             furniture: p.furniture.map(f =>
               f.id === id ? { ...f, rotation: (f.rotation + deltaDeg + 360) % 360 } : f
+            ),
+            updatedAt: Date.now(),
+          }
+        : p
+    );
+    savePlans(updated);
+    set({ plans: updated });
+  },
+
+  flipFurniture: (id) => {
+    const { plans, activePlanId } = get();
+    if (!activePlanId) return;
+    const updated = plans.map(p =>
+      p.id === activePlanId
+        ? {
+            ...p,
+            furniture: p.furniture.map(f =>
+              f.id === id ? { ...f, shape: flipShapeX(f.shape) } : f
             ),
             updatedAt: Date.now(),
           }
