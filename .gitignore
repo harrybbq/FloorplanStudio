@@ -6,5 +6,3 @@ dist
 
 # tsc -b artifacts
 *.tsbuildinfo
-vite.config.js
-vite.config.d.ts

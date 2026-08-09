@@ -5,16 +5,16 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Allow the workflow to publish to Pages via OIDC.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
-# Only one Pages deploy at a time; newer pushes cancel in-flight runs.
+# One Pages deploy at a time. `cancel-in-progress: false` is deliberate: this
+# group covers the deploy job, and killing `deploy-pages` mid-flight leaves the
+# Pages deployment stuck "in progress", which blocks every later run. Queued
+# runs supersede each other instead, so the newest commit still wins.
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -34,6 +34,10 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    # Publishing to Pages via OIDC needs these; the build job does not.
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
