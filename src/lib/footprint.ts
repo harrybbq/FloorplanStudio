@@ -158,9 +158,9 @@ function triangulate(input: Point[]): Point[][] {
 
   const idx = poly.map((_, i) => i);
   const tris: Point[][] = [];
-  let guard = 0;
 
-  while (idx.length > 3 && guard++ < 5000) {
+  // Each pass either clips an ear or bails, so this always terminates.
+  while (idx.length > 3) {
     let clipped = false;
     for (let i = 0; i < idx.length; i++) {
       const a = poly[idx[(i - 1 + idx.length) % idx.length]];

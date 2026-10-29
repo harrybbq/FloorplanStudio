@@ -1,15 +1,14 @@
 import type { Confidence, FurnitureSource } from '../../types';
 
-/** Human label + a hex dot colour for a confidence level. */
+/** Human label + a dot colour for a confidence level. */
 export function confidenceMeta(confidence: Confidence): { label: string; dot: string } {
   switch (confidence) {
     case 'verified':
-      return { label: 'Verified', dot: '#1a7a4a' }; // em green
+      return { label: 'Verified', dot: '#1a7a4a' }; // em
     case 'estimated':
       return { label: 'Estimated', dot: '#c8970a' }; // gold
     case 'user-entered':
-    default:
-      return { label: 'You entered', dot: '#8a8278' }; // muted
+      return { label: 'You entered', dot: '#8a8278' }; // ink-muted
   }
 }
 
@@ -23,7 +22,6 @@ export function sourceLabel(source: FurnitureSource): string {
     case 'catalog':
       return 'Catalog';
     case 'manual':
-    default:
       return 'Manual';
   }
 }

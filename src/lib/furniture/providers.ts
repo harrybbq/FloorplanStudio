@@ -1,139 +1,85 @@
-import type { FurnitureDimensions } from '../../types';
+import type { FurnitureDimensions, FurnitureSource } from '../../types';
 import { matchCatalog } from './sampleCatalog';
 
 /**
  * FurnitureProvider — the swap point for furniture-dimension lookups.
  *
- * The registry walks providers in order and returns the first non-null hit.
- * The calling UI always routes a hit through a "confirm dimensions" modal, so
- * estimated results are surfaced (and editable) before anything is placed.
- * Adding a provider is a one-file change here — no UI changes required.
+ * The registry asks providers in order and returns the first hit. The UI
+ * always routes a hit through the "confirm dimensions" step, so estimated
+ * results are shown (and editable) before anything is placed. Adding a
+ * provider is a change here only — no UI changes needed.
  *
  * Shipping in this build:
- *   - SampleProvider — a tiny built-in catalog of well-known products (works
- *     offline; illustrative sample data marked 'estimated').
- *   - ManualProvider — always returns null → UI falls through to manual entry.
+ *   - Catalog: a small built-in catalog of common products (offline).
  *
- * Ready to enable (need a backend endpoint — an API key must NOT live in this
- * client-side build, so these call a serverless proxy you host):
- *   - LLMProvider     — POSTs the query to your endpoint, which asks an LLM.
- *   - ScraperProvider — POSTs the query/URL to your endpoint, which scrapes a
- *     product page (browsers can't scrape cross-origin directly — CORS).
+ * Ready to enable (each needs a backend endpoint — an API key must never live
+ * in this client-side build, so they call a serverless proxy you host):
+ *   - AI lookup  (VITE_LLM_ENDPOINT)     — proxy asks an LLM for the dimensions
+ *   - Web lookup (VITE_SCRAPER_ENDPOINT) — proxy scrapes a product page
  */
 export interface FurnitureProvider {
-  readonly id: string;
   readonly label: string;
-  /** Return null if this provider can't satisfy the query. */
+  /** Return null if this provider can't answer the query. */
   lookup(query: string): Promise<FurnitureDimensions | null>;
 }
 
-/** Built-in sample catalog. Offline, no config. Marks results 'estimated'. */
-export class SampleProvider implements FurnitureProvider {
-  readonly id = 'catalog';
-  readonly label = 'Sample catalog';
-  async lookup(query: string): Promise<FurnitureDimensions | null> {
+const catalogProvider: FurnitureProvider = {
+  label: 'Catalog',
+  async lookup(query) {
     const entry = matchCatalog(query);
     if (!entry) return null;
-    return {
-      name: entry.name,
-      widthMm: entry.widthMm,
-      depthMm: entry.depthMm,
-      heightMm: entry.heightMm,
-      source: 'catalog',
-      confidence: 'estimated',
-    };
-  }
-}
+    const { name, widthMm, depthMm, heightMm } = entry;
+    return { name, widthMm, depthMm, heightMm, source: 'catalog', confidence: 'estimated' };
+  },
+};
+
+const TIMEOUT_MS = 8000;
+const MAX_REASONABLE_MM = 20_000;
+const isLength = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0 && v < MAX_REASONABLE_MM;
 
 /**
- * Asks an LLM (via your serverless proxy) for a product's dimensions.
- * Inert until an endpoint is provided — returns null so the registry moves on.
+ * Calls a serverless proxy that returns a product's dimensions.
+ * Inert (returns null) when no endpoint is configured.
  *
- * Expected endpoint contract:
- *   POST <endpoint>  { "query": string }
- *   200 -> { "name"?: string, "widthMm": number, "depthMm": number, "heightMm"?: number }
+ * Contract:  POST <endpoint> { "query": string }
+ *            200 → { "name"?: string, "widthMm": number, "depthMm": number, "heightMm"?: number }
  */
-export class LLMProvider implements FurnitureProvider {
-  readonly id = 'llm';
-  readonly label = 'AI lookup';
-  constructor(private readonly endpoint?: string) {}
+class EndpointProvider implements FurnitureProvider {
+  constructor(
+    readonly label: string,
+    private readonly source: FurnitureSource,
+    private readonly endpoint: string | undefined
+  ) {}
+
   async lookup(query: string): Promise<FurnitureDimensions | null> {
-    if (!this.endpoint) return null; // not configured in this build
+    if (!this.endpoint) return null;
     try {
       const res = await fetch(this.endpoint, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ query }),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
       });
       if (!res.ok) return null;
       const data = await res.json();
-      if (!data || typeof data.widthMm !== 'number' || typeof data.depthMm !== 'number') {
-        return null;
-      }
+      if (!isLength(data?.widthMm) || !isLength(data?.depthMm)) return null;
       return {
-        name: typeof data.name === 'string' ? data.name : query,
+        name: typeof data.name === 'string' && data.name.trim() ? data.name.trim() : query,
         widthMm: data.widthMm,
         depthMm: data.depthMm,
-        heightMm: typeof data.heightMm === 'number' ? data.heightMm : 0,
-        source: 'llm',
+        heightMm: isLength(data.heightMm) ? data.heightMm : 0,
+        source: this.source,
         confidence: 'estimated',
       };
     } catch {
-      return null;
+      return null; // network error, timeout or bad JSON — let the next provider try
     }
   }
 }
 
-/**
- * Parses dimensions from a product page (via your serverless proxy).
- * Inert until an endpoint is provided. Same response contract as LLMProvider.
- */
-export class ScraperProvider implements FurnitureProvider {
-  readonly id = 'scraper';
-  readonly label = 'Web lookup';
-  constructor(private readonly endpoint?: string) {}
-  async lookup(query: string): Promise<FurnitureDimensions | null> {
-    if (!this.endpoint) return null; // not configured in this build
-    try {
-      const res = await fetch(this.endpoint, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ query }),
-      });
-      if (!res.ok) return null;
-      const data = await res.json();
-      if (!data || typeof data.widthMm !== 'number' || typeof data.depthMm !== 'number') {
-        return null;
-      }
-      return {
-        name: typeof data.name === 'string' ? data.name : query,
-        widthMm: data.widthMm,
-        depthMm: data.depthMm,
-        heightMm: typeof data.heightMm === 'number' ? data.heightMm : 0,
-        source: 'scraper',
-        confidence: 'estimated',
-      };
-    } catch {
-      return null;
-    }
-  }
-}
+class ProviderRegistry {
+  constructor(private readonly providers: FurnitureProvider[]) {}
 
-/** v1 default — no lookup performed; caller falls through to a manual-entry form. */
-export class ManualProvider implements FurnitureProvider {
-  readonly id = 'manual';
-  readonly label = 'Manual entry';
-  async lookup(_query: string): Promise<FurnitureDimensions | null> {
-    return null;
-  }
-}
-
-/** Registry walks providers in order until one returns a hit. */
-export class ProviderRegistry {
-  private providers: FurnitureProvider[];
-  constructor(providers: FurnitureProvider[]) {
-    this.providers = providers;
-  }
   async lookup(query: string): Promise<FurnitureDimensions | null> {
     for (const p of this.providers) {
       const result = await p.lookup(query);
@@ -143,18 +89,9 @@ export class ProviderRegistry {
   }
 }
 
-/**
- * To enable real lookups, set these to your hosted serverless proxy URLs
- * (e.g. a Netlify function or Cloudflare Worker that holds the API key).
- * Left undefined here so the providers stay inert in the static build.
- */
-const LLM_ENDPOINT: string | undefined = undefined;
-const SCRAPER_ENDPOINT: string | undefined = undefined;
-
-// Order = preference: free/offline first, paid/remote next, manual last.
+// Order = preference: free/offline first, then remote.
 export const defaultRegistry = new ProviderRegistry([
-  new SampleProvider(),
-  new LLMProvider(LLM_ENDPOINT),
-  new ScraperProvider(SCRAPER_ENDPOINT),
-  new ManualProvider(),
+  catalogProvider,
+  new EndpointProvider('AI lookup', 'llm', import.meta.env.VITE_LLM_ENDPOINT),
+  new EndpointProvider('Web lookup', 'scraper', import.meta.env.VITE_SCRAPER_ENDPOINT),
 ]);

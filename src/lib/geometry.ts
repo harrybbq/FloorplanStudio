@@ -11,7 +11,7 @@ import { localConvexParts } from './footprint';
  */
 
 /** Transform an item's convex parts from local mm space into world pixel-space. */
-export function getWorldParts(item: FurnitureItem, pxPerMm: number): Point[][] {
+function getWorldParts(item: FurnitureItem, pxPerMm: number): Point[][] {
   const r = (item.rotation * Math.PI) / 180;
   const cos = Math.cos(r);
   const sin = Math.sin(r);
@@ -51,13 +51,16 @@ function edgeNormals(poly: Point[]): Point[] {
   return axes;
 }
 
-/** SAT intersection test for two convex polygons (touching counts as intersecting). */
-export function convexPolysIntersect(a: Point[], b: Point[]): boolean {
+/** Separation smaller than this (px) is treated as touching, not overlapping. */
+const TOUCH_EPSILON = 1e-6;
+
+/** SAT intersection test for two convex polygons. Touching edges do NOT count. */
+function convexPolysIntersect(a: Point[], b: Point[]): boolean {
   const axes = [...edgeNormals(a), ...edgeNormals(b)];
   for (const axis of axes) {
     const [amin, amax] = project(a, axis);
     const [bmin, bmax] = project(b, axis);
-    if (amax < bmin || bmax < amin) return false; // separating axis found
+    if (amax <= bmin + TOUCH_EPSILON || bmax <= amin + TOUCH_EPSILON) return false; // separating axis
   }
   return true;
 }

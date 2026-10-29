@@ -13,42 +13,42 @@ export type CatalogEntry = {
   widthMm: number;
   depthMm: number;
   heightMm: number;
-  /** Lowercased substrings; longest alias found in the query wins. */
+  /** Search phrases, matched as whole words; the longest one found in the query wins. */
   aliases: string[];
 };
 
-export const SAMPLE_CATALOG: CatalogEntry[] = [
+const SAMPLE_CATALOG: CatalogEntry[] = [
   // ── Bedroom: beds ──
-  { name: 'IKEA Malm bed frame (double)', widthMm: 1650, depthMm: 2090, heightMm: 380, aliases: ['malm bed', 'malm double', 'malm frame'] },
-  { name: 'IKEA Hemnes bed frame (double)', widthMm: 1560, depthMm: 2110, heightMm: 1200, aliases: ['hemnes bed'] },
+  { name: 'IKEA Malm bed frame (double)', widthMm: 1650, depthMm: 2090, heightMm: 380, aliases: ['malm', 'malm bed', 'malm double', 'malm frame'] },
+  { name: 'IKEA Hemnes bed frame (double)', widthMm: 1560, depthMm: 2110, heightMm: 1200, aliases: ['hemnes', 'hemnes bed'] },
   { name: 'IKEA Tarva bed frame (double)', widthMm: 1480, depthMm: 2070, heightMm: 920, aliases: ['tarva'] },
   { name: 'IKEA Songesand bed frame (double)', widthMm: 1560, depthMm: 2090, heightMm: 950, aliases: ['songesand'] },
 
   // ── Bedroom: storage ──
-  { name: 'IKEA Malm 6-drawer chest', widthMm: 1600, depthMm: 480, heightMm: 780, aliases: ['malm 6', 'malm six', 'malm 6-drawer', 'malm chest', 'malm dresser'] },
+  { name: 'IKEA Malm 6-drawer chest', widthMm: 1600, depthMm: 480, heightMm: 780, aliases: ['malm 6', 'malm six', 'malm chest', 'malm dresser', 'malm drawers'] },
   { name: 'IKEA Hemnes 8-drawer chest', widthMm: 1600, depthMm: 500, heightMm: 960, aliases: ['hemnes 8', 'hemnes chest', 'hemnes dresser'] },
   { name: 'IKEA Nordli 6-drawer chest', widthMm: 1200, depthMm: 470, heightMm: 990, aliases: ['nordli'] },
   { name: 'IKEA Kullen 5-drawer chest', widthMm: 700, depthMm: 400, heightMm: 1120, aliases: ['kullen'] },
-  { name: 'IKEA Brimnes wardrobe (3-door)', widthMm: 1170, depthMm: 500, heightMm: 1900, aliases: ['brimnes wardrobe', 'brimnes'] },
+  { name: 'IKEA Brimnes wardrobe (3-door)', widthMm: 1170, depthMm: 500, heightMm: 1900, aliases: ['brimnes'] },
   { name: 'IKEA Pax wardrobe (2-door)', widthMm: 1000, depthMm: 600, heightMm: 2010, aliases: ['pax'] },
 
   // ── Living: seating ──
   { name: 'IKEA Ektorp 3-seat sofa', widthMm: 2180, depthMm: 880, heightMm: 880, aliases: ['ektorp'] },
   { name: 'IKEA Kivik 3-seat sofa', widthMm: 2280, depthMm: 950, heightMm: 830, aliases: ['kivik'] },
   { name: 'IKEA Klippan 2-seat sofa', widthMm: 1800, depthMm: 880, heightMm: 660, aliases: ['klippan'] },
-  { name: 'IKEA Söderhamn 3-seat sofa', widthMm: 1980, depthMm: 990, heightMm: 830, aliases: ['soderhamn', 'söderhamn'] },
+  { name: 'IKEA Söderhamn 3-seat sofa', widthMm: 1980, depthMm: 990, heightMm: 830, aliases: ['soderhamn'] },
   { name: 'IKEA Friheten corner sofa-bed', widthMm: 2300, depthMm: 1510, heightMm: 660, aliases: ['friheten'] },
-  { name: 'IKEA Poäng armchair', widthMm: 680, depthMm: 820, heightMm: 1000, aliases: ['poang', 'poäng'] },
+  { name: 'IKEA Poäng armchair', widthMm: 680, depthMm: 820, heightMm: 1000, aliases: ['poang'] },
   { name: 'IKEA Strandmon wing chair', widthMm: 820, depthMm: 960, heightMm: 1010, aliases: ['strandmon', 'wing chair'] },
 
   // ── Living: tables / storage ──
   { name: 'IKEA Lack side table', widthMm: 550, depthMm: 550, heightMm: 450, aliases: ['lack side'] },
-  { name: 'IKEA Lack coffee table', widthMm: 900, depthMm: 550, heightMm: 450, aliases: ['lack coffee', 'lack table', 'lack'] },
+  { name: 'IKEA Lack coffee table', widthMm: 900, depthMm: 550, heightMm: 450, aliases: ['lack', 'lack coffee'] },
   { name: 'IKEA Lisabo dining table', widthMm: 1400, depthMm: 780, heightMm: 740, aliases: ['lisabo'] },
   { name: 'IKEA Ingatorp dining table', widthMm: 1550, depthMm: 870, heightMm: 740, aliases: ['ingatorp'] },
-  { name: 'IKEA Besta unit', widthMm: 1200, depthMm: 420, heightMm: 640, aliases: ['besta', 'bestå'] },
+  { name: 'IKEA Besta unit', widthMm: 1200, depthMm: 420, heightMm: 640, aliases: ['besta'] },
   { name: 'IKEA Billy bookcase', widthMm: 800, depthMm: 280, heightMm: 2020, aliases: ['billy'] },
-  { name: 'IKEA Kallax 2x4 shelf', widthMm: 770, depthMm: 390, heightMm: 1470, aliases: ['kallax 2'] },
+  { name: 'IKEA Kallax 2x4 shelf', widthMm: 770, depthMm: 390, heightMm: 1470, aliases: ['kallax 2x4'] },
   { name: 'IKEA Kallax 4x4 shelf', widthMm: 1470, depthMm: 390, heightMm: 1470, aliases: ['kallax', 'expedit'] },
 
   // ── Office ──
@@ -60,9 +60,9 @@ export const SAMPLE_CATALOG: CatalogEntry[] = [
 
   // ── B&Q (own brands: GoodHome, Form) — approximate/generic ──
   { name: 'B&Q GoodHome kitchen base cabinet (600)', widthMm: 600, depthMm: 580, heightMm: 720, aliases: ['goodhome base', 'b&q base cabinet', 'b&q kitchen cabinet'] },
-  { name: 'B&Q GoodHome Atomia wardrobe', widthMm: 1000, depthMm: 580, heightMm: 1875, aliases: ['atomia', 'goodhome atomia'] },
+  { name: 'B&Q GoodHome Atomia wardrobe', widthMm: 1000, depthMm: 580, heightMm: 1875, aliases: ['atomia'] },
   { name: 'B&Q Form Darwin wardrobe (2-door)', widthMm: 1000, depthMm: 560, heightMm: 1800, aliases: ['form darwin', 'darwin wardrobe', 'b&q wardrobe'] },
-  { name: 'B&Q Form Mixxit shelving unit', widthMm: 640, depthMm: 330, heightMm: 1800, aliases: ['form mixxit', 'mixxit', 'b&q shelving'] },
+  { name: 'B&Q Form Mixxit shelving unit', widthMm: 640, depthMm: 330, heightMm: 1800, aliases: ['mixxit', 'b&q shelving'] },
   { name: 'B&Q Form Konnect storage cube', widthMm: 320, depthMm: 320, heightMm: 320, aliases: ['form konnect', 'konnect cube', 'storage cube', 'b&q cube'] },
   { name: 'B&Q Form Oppen wall shelf', widthMm: 800, depthMm: 300, heightMm: 250, aliases: ['form oppen', 'oppen shelf'] },
 
@@ -75,27 +75,38 @@ export const SAMPLE_CATALOG: CatalogEntry[] = [
   { name: 'Tesco ottoman storage bed (double)', widthMm: 1500, depthMm: 2000, heightMm: 1000, aliases: ['tesco ottoman', 'tesco bed'] },
 ];
 
-/** Normalize a query for matching: lowercase, collapse whitespace. */
+/**
+ * Normalise for matching: strip accents (poäng → poang), "&" → "and", and
+ * collapse all punctuation/whitespace to single spaces, padded so phrases can
+ * be matched on whole-word boundaries.
+ */
 function normalize(s: string): string {
-  return s.trim().toLowerCase().replace(/\s+/g, ' ');
+  const words = s
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+  return ` ${words} `;
 }
 
+const INDEX = SAMPLE_CATALOG.flatMap(entry => entry.aliases.map(alias => ({ entry, alias: normalize(alias) })));
+
 /**
- * Find the best catalog entry for a query: the entry with the LONGEST alias
- * that appears in the query. Longest-wins makes matching order-independent
- * (e.g. "lack side table" → Lack side, not the generic "lack").
+ * Best catalog entry for a query: the one whose alias is the longest
+ * whole-word phrase in the query. Longest-wins keeps matching independent of
+ * list order ("lack side table" → Lack side, not the generic "lack"), and
+ * whole words stop "black sofa" matching "lack".
  */
 export function matchCatalog(query: string): CatalogEntry | null {
   const q = normalize(query);
-  if (!q) return null;
   let best: CatalogEntry | null = null;
   let bestLen = 0;
-  for (const entry of SAMPLE_CATALOG) {
-    for (const a of entry.aliases) {
-      if (a.length > bestLen && q.includes(a)) {
-        best = entry;
-        bestLen = a.length;
-      }
+  for (const { entry, alias } of INDEX) {
+    if (alias.length > bestLen && alias.trim() && q.includes(alias)) {
+      best = entry;
+      bestLen = alias.length;
     }
   }
   return best;

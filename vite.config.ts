@@ -7,4 +7,15 @@ export default defineConfig(({ command }) => ({
   base: command === 'build' ? '/FloorplanStudio/' : '/',
   plugins: [react()],
   server: { port: 5180 },
+  build: {
+    rollupOptions: {
+      output: {
+        // Vendor code changes rarely — keep it in its own cacheable chunks.
+        manualChunks: {
+          react: ['react', 'react-dom'],
+          konva: ['konva', 'react-konva'],
+        },
+      },
+    },
+  },
 }));
