@@ -12,6 +12,7 @@ const OVERLAP_RED = '#e02424';
 const WALL_COLOR = '#3a3530';
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 8;
+const FIT_PADDING = 40;
 /** A drag shorter than this (screen px) is still a click. */
 const PAN_CLICK_SLOP = 3;
 /** Points closer than this on screen count as the same point. */
@@ -70,13 +71,14 @@ export function FloorplanCanvas() {
   // — view transform —
   const [view, setView] = useState<View>({ scale: 1, x: 0, y: 0 });
 
+  // A hidden or collapsed container (e.g. a background tab) has no room to fit into.
+  const canFit = !!size && size.w > FIT_PADDING * 2 && size.h > FIT_PADDING * 2;
+
   function fitView() {
-    if (!imageEl || !size) return;
-    const padding = 40;
-    const scale = Math.min(
-      (size.w - padding * 2) / imageEl.naturalWidth,
-      (size.h - padding * 2) / imageEl.naturalHeight,
-      1
+    if (!imageEl || !size || !canFit) return;
+    const scale = Math.max(
+      MIN_SCALE,
+      Math.min((size.w - FIT_PADDING * 2) / imageEl.naturalWidth, (size.h - FIT_PADDING * 2) / imageEl.naturalHeight, 1)
     );
     setView({
       scale,
@@ -88,11 +90,11 @@ export function FloorplanCanvas() {
   // Fit once per image (not on every resize, so the user's zoom/pan survives).
   const fittedFor = useRef<HTMLImageElement | null>(null);
   useEffect(() => {
-    if (imageEl && size && fittedFor.current !== imageEl) {
+    if (imageEl && canFit && fittedFor.current !== imageEl) {
       fittedFor.current = imageEl;
       fitView();
     }
-  }, [imageEl, size]); // fitView only reads these two
+  }, [imageEl, size]); // fitView (and canFit) only read these two
 
   function zoomAt(factor: number, anchor: Point) {
     setView(v => {

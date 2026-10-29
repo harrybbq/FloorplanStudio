@@ -3,7 +3,7 @@ import { usePlanStore } from '../state/planStore';
 import { useOverlaps } from '../state/useOverlaps';
 import { formatLength } from '../lib/units';
 import { confidenceMeta, sourceLabel } from '../lib/furniture/provenance';
-import type { FurnitureItem, Wall } from '../types';
+import type { FurnitureItem, PlanLink, Wall } from '../types';
 
 const NO_WALLS: Wall[] = [];
 
@@ -52,6 +52,7 @@ function PlansSection() {
   const selectPlan = usePlanStore(s => s.selectPlan);
   const deletePlan = usePlanStore(s => s.deletePlan);
   const renamePlan = usePlanStore(s => s.renamePlan);
+  const activeLink = usePlanStore(s => s.active()?.link);
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState('');
 
@@ -125,7 +126,29 @@ function PlansSection() {
           );
         })}
       </ul>
+      {activeLink && <LinkedListing link={activeLink} />}
     </section>
+  );
+}
+
+/** Where a plan opened from HouseHunter came from, with links back. */
+function LinkedListing({ link }: { link: PlanLink }) {
+  const linkClass = 'text-em hover:underline';
+  return (
+    <p className="mt-2 text-xs text-ink-muted flex flex-wrap gap-x-2">
+      <span>From HouseHunter</span>
+      {link.returnUrl && (
+        // Named target: HouseHunter names its tab, so this goes back to it.
+        <a className={linkClass} href={link.returnUrl} target="househunter">
+          Back to listing
+        </a>
+      )}
+      {link.listingUrl && (
+        <a className={linkClass} href={link.listingUrl} target="_blank" rel="noreferrer noopener">
+          Property page ↗
+        </a>
+      )}
+    </p>
   );
 }
 

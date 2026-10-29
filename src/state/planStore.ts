@@ -5,6 +5,7 @@ import type {
   Mode,
   PlacingTemplate,
   Plan,
+  PlanLink,
   Point,
   SavedFurniture,
   UnitSystem,
@@ -79,10 +80,15 @@ interface PlanState {
   deletePlan: (id: string) => void;
   selectPlan: (id: string) => void;
   renamePlan: (id: string, name: string) => void;
+  /** Select the plan for this listing's floorplan, creating it if needed. Returns its id. */
+  openLinkedPlan: (link: PlanLink, name: string) => string;
 
   // — image —
-  /** Replace the backdrop. Calibration resets unless one is supplied (e.g. the sample plan). */
-  setPlanImage: (dataUrl: string, calibration?: Calibration | null) => void;
+  /**
+   * Replace the backdrop of `planId` (default: the active plan). Calibration resets
+   * unless one is supplied (e.g. the sample plan).
+   */
+  setPlanImage: (dataUrl: string, calibration?: Calibration | null, planId?: string | null) => void;
   clearPlanImage: () => void;
 
   // — calibration —
@@ -144,12 +150,22 @@ const initialActiveId = initialPlans.some(p => p.id === storedActiveId)
   : initialPlans[0]?.id ?? null;
 
 export const usePlanStore = create<PlanState>((set, get) => {
-  /** Apply `fn` to the active plan, persist, and merge `extra` into state. */
-  function mutateActive(fn: (p: Plan) => Plan, extra: Partial<PlanState> = {}): void {
-    const { plans, activePlanId } = get();
-    if (!activePlanId) return;
-    const updated = plans.map(p => (p.id === activePlanId ? { ...fn(p), updatedAt: Date.now() } : p));
+  /** Apply `fn` to one plan, persist, and merge `extra` into state. */
+  function mutatePlan(id: string, fn: (p: Plan) => Plan, extra: Partial<PlanState> = {}): void {
+    const updated = get().plans.map(p => (p.id === id ? { ...fn(p), updatedAt: Date.now() } : p));
     set({ plans: updated, saveFailed: !savePlans(updated), ...extra });
+  }
+
+  function mutateActive(fn: (p: Plan) => Plan, extra: Partial<PlanState> = {}): void {
+    const id = get().activePlanId;
+    if (id) mutatePlan(id, fn, extra);
+  }
+
+  /** Add a plan and make it active. */
+  function addPlan(p: Plan): void {
+    const updated = [...get().plans, p];
+    saveActivePlanId(p.id);
+    set({ plans: updated, activePlanId: p.id, saveFailed: !savePlans(updated), ...PLAN_SWITCH });
   }
 
   return {
@@ -166,13 +182,7 @@ export const usePlanStore = create<PlanState>((set, get) => {
     },
 
     // — plans —
-    createPlan: name => {
-      const { plans } = get();
-      const p = blankPlan(name ?? nextPlanName(plans));
-      const updated = [...plans, p];
-      saveActivePlanId(p.id);
-      set({ plans: updated, activePlanId: p.id, saveFailed: !savePlans(updated), ...PLAN_SWITCH });
-    },
+    createPlan: name => addPlan(blankPlan(name ?? nextPlanName(get().plans))),
 
     deletePlan: id => {
       const { plans, activePlanId } = get();
@@ -195,17 +205,35 @@ export const usePlanStore = create<PlanState>((set, get) => {
       set({ activePlanId: id, ...PLAN_SWITCH });
     },
 
-    renamePlan: (id, name) => {
-      const updated = get().plans.map(p => (p.id === id ? { ...p, name, updatedAt: Date.now() } : p));
-      set({ plans: updated, saveFailed: !savePlans(updated) });
+    renamePlan: (id, name) => mutatePlan(id, p => ({ ...p, name })),
+
+    openLinkedPlan: (link, name) => {
+      const existing = get().plans.find(
+        p => p.link?.app === link.app && p.link.listingId === link.listingId && p.link.floorplanUrl === link.floorplanUrl
+      );
+      if (!existing) {
+        const p = { ...blankPlan(name), link };
+        addPlan(p);
+        return p.id;
+      }
+      get().selectPlan(existing.id);
+      // Refresh the links (HouseHunter's address can change) without losing any the new hand-off lacks.
+      mutatePlan(existing.id, p => ({
+        ...p,
+        link: {
+          ...link,
+          listingUrl: link.listingUrl ?? p.link?.listingUrl ?? null,
+          returnUrl: link.returnUrl ?? p.link?.returnUrl ?? null,
+        },
+      }));
+      return existing.id;
     },
 
     // — image —
-    setPlanImage: (dataUrl, calibration = null) => {
-      const id = get().activePlanId;
-      if (!id) return;
-      const imageSaved = saveImage(id, dataUrl);
-      mutateActive(p => ({ ...p, imageDataUrl: dataUrl, calibration }), IDLE);
+    setPlanImage: (dataUrl, calibration = null, planId = get().activePlanId) => {
+      if (!planId) return;
+      const imageSaved = saveImage(planId, dataUrl);
+      mutatePlan(planId, p => ({ ...p, imageDataUrl: dataUrl, calibration }), planId === get().activePlanId ? IDLE : {});
       if (!imageSaved) set({ saveFailed: true });
     },
 

@@ -6,6 +6,7 @@ import { EmptyState } from './components/EmptyState';
 import { AddFurnitureModal } from './components/AddFurnitureModal';
 import { ensureInitialPlan, usePlanStore } from './state/planStore';
 import { useImageImport } from './state/useImageImport';
+import { useHouseHunterHandoff, type HandoffStatus } from './state/useHouseHunterHandoff';
 import { imageFromItems } from './lib/image';
 
 const NUDGE_MM = 10;
@@ -27,6 +28,7 @@ export default function App() {
   const importImage = useImageImport();
 
   const [addOpen, setAddOpen] = useState(false);
+  const [handoff, dismissHandoff] = useHouseHunterHandoff();
 
   useEffect(ensureInitialPlan, []);
 
@@ -148,6 +150,10 @@ export default function App() {
             <ModeBanner tone="warn">No scale set yet — calibrate before placing furniture.</ModeBanner>
           )}
 
+          {handoff && handoff.planId === plan?.id && !plan.imageDataUrl && (
+            <HandoffBanner status={handoff} onDismiss={dismissHandoff} />
+          )}
+
           <UndoToast />
         </main>
       </div>
@@ -174,6 +180,28 @@ function BannerButton({ onClick, children }: { onClick: () => void; children: Re
     <button className="btn-ghost text-xs !text-white hover:!bg-white/15" onClick={onClick}>
       {children}
     </button>
+  );
+}
+
+/** Progress of a floorplan coming from HouseHunter, or how to finish by hand. */
+function HandoffBanner({ status, onDismiss }: { status: NonNullable<HandoffStatus>; onDismiss: () => void }) {
+  if (status.state === 'loading') return <ModeBanner>Fetching the floorplan from HouseHunter…</ModeBanner>;
+  return (
+    <div
+      className="absolute top-4 left-1/2 -translate-x-1/2 w-[min(32rem,calc(100%-2rem))] panel shadow-md px-4 py-3 text-sm flex items-start gap-3"
+      role="alert"
+    >
+      <p className="flex-1">
+        Couldn't fetch the floorplan automatically (is HouseHunter's local app running?).{' '}
+        <a className="text-em font-medium underline" href={status.floorplanUrl} target="_blank" rel="noreferrer noopener">
+          Open the floorplan ↗
+        </a>
+        , copy the image, then press <kbd>Ctrl+V</kbd> here.
+      </p>
+      <button className="btn-ghost text-xs" onClick={onDismiss} aria-label="Dismiss">
+        ✕
+      </button>
+    </div>
   );
 }
 

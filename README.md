@@ -29,6 +29,11 @@ Pushing to `main` runs the tests, builds, and deploys to GitHub Pages
    *Lookup* (built-in IKEA / B&Q / Tesco catalog), or your *Library*. Click the plan to place it.
 4. Optionally **trace walls** so furniture poking through a wall is flagged too.
 
+**From HouseHunter:** *Plan furniture* on a listing's floorplan opens it here as its own plan
+(one per listing and floorplan; clicking again reopens it), with links back to the listing.
+The image comes through HouseHunter's local dev server; if that isn't running, you're asked to
+copy and paste it. Your furniture library is shared by every plan, so the same sofa can be tried in each flat.
+
 | Key | Action |
 | --- | --- |
 | `V` / `C` / `W` / `A` | Select · Calibrate · Trace walls · Add furniture |
@@ -44,7 +49,8 @@ Pushing to `main` runs the tests, builds, and deploys to GitHub Pages
 
 | Path | What it does |
 | --- | --- |
-| `src/state/planStore.ts` | Zustand store — every edit goes through `mutateActive()`, which persists it |
+| `src/state/planStore.ts` | Zustand store — every edit goes through `mutatePlan()` / `mutateActive()`, which persist it |
+| `src/lib/handoff.ts` | Reads HouseHunter's URL-hash hand-off and fetches the floorplan (relay first) |
 | `src/lib/storage.ts` | `localStorage` I/O. Each plan's image lives under its own key, so frequent edits stay small |
 | `src/lib/footprint.ts` | Shape system: drawable outline + convex parts (L-shapes split in two, custom polygons triangulated) |
 | `src/lib/geometry.ts` | Overlap detection (SAT on convex parts, segment tests for walls) |

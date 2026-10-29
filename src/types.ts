@@ -65,6 +65,18 @@ export type FurnitureItem = {
   color: string;
 };
 
+/** The listing a plan was opened from (HouseHunter's "Plan furniture" button). */
+export type PlanLink = {
+  app: 'househunter';
+  listingId: string;
+  /** Identifies the plan together with listingId: a listing can have several floorplans. */
+  floorplanUrl: string;
+  /** The property site's listing page. */
+  listingUrl: string | null;
+  /** HouseHunter, opened on this listing. */
+  returnUrl: string | null;
+};
+
 /** A saved floorplan. */
 export type Plan = {
   id: string;
@@ -75,6 +87,7 @@ export type Plan = {
   furniture: FurnitureItem[];
   /** Traced walls used for overlap detection (older saves are migrated on load). */
   walls: Wall[];
+  link?: PlanLink;
   createdAt: number;
   updatedAt: number;
 };
