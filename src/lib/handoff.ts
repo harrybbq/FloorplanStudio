@@ -8,8 +8,10 @@ import { mm2ToSqft, roomMetrics } from './rooms';
  *   #from=househunter&listing=<id>&name=<address>&floorplan=<image url>
  *    &page=<listing url>&return=<HouseHunter url>&relay=<image relay url>
  *
- * Property sites don't let other origins read their images, so the image comes
- * through HouseHunter's local dev server (`relay`) when it's running.
+ * Property sites don't let other origins read their images, so HouseHunter
+ * supplies it: first by message from the HouseHunter tab that opened this one
+ * (works even from the published site), then through its local dev server
+ * (`relay`), which browsers may block a public page from reaching.
  */
 export type Handoff = { name: string; link: PlanLink; relayUrl: string | null };
 
@@ -60,8 +62,50 @@ export function floorplanSources(h: Handoff): string[] {
   return [relay.toString(), direct];
 }
 
-/** Fetch the floorplan image, trying the relay first. Throws if every source fails. */
+// Tab-to-tab protocol (HouseHunter's ui/studio.ts answers it):
+// we post { type: FLOORPLAN_REQUEST, id, url } to window.opener and wait for
+// { type: FLOORPLAN_REPLY, id, url, blob | error } from HouseHunter's origin.
+const FLOORPLAN_REQUEST = 'floorplanstudio:floorplan-request';
+const FLOORPLAN_REPLY = 'househunter:floorplan';
+const OPENER_TIMEOUT_MS = 5000;
+
+/** Ask the HouseHunter tab that opened this one for the image. */
+function floorplanFromOpener(h: Handoff): Promise<Blob> {
+  const opener = window.opener as Window | null;
+  const origin = h.link.returnUrl ? new URL(h.link.returnUrl).origin : null;
+  if (!opener || !origin) return Promise.reject(new Error('Not opened from HouseHunter'));
+  const id = Math.random().toString(36).slice(2);
+  const url = h.link.floorplanUrl;
+
+  return new Promise((resolve, reject) => {
+    const finish = (settle: () => void) => {
+      clearTimeout(timer);
+      window.removeEventListener('message', onMessage);
+      settle();
+    };
+    // A closed or reloaded HouseHunter tab never answers.
+    const timer = setTimeout(() => finish(() => reject(new Error('HouseHunter did not answer'))), OPENER_TIMEOUT_MS);
+    function onMessage(e: MessageEvent) {
+      const d = e.data as { type?: string; id?: string; url?: string; blob?: unknown; error?: string } | null;
+      if (e.origin !== origin || d?.type !== FLOORPLAN_REPLY || d.id !== id || d.url !== url) return;
+      const blob = d.blob;
+      finish(() =>
+        blob instanceof Blob && blob.type.startsWith('image/') ? resolve(blob) : reject(new Error(d.error ?? 'No image'))
+      );
+    }
+    window.addEventListener('message', onMessage);
+    // targetOrigin: dropped (and so times out) if the opener is no longer HouseHunter.
+    opener.postMessage({ type: FLOORPLAN_REQUEST, id, url }, origin);
+  });
+}
+
+/** Get the floorplan image: from the HouseHunter tab, then the relay, then directly. Throws if all fail. */
 export async function fetchFloorplan(h: Handoff): Promise<Blob> {
+  try {
+    return await floorplanFromOpener(h);
+  } catch {
+    // Opened by hand, HouseHunter closed, or the published HouseHunter (no server): try fetching.
+  }
   for (const src of floorplanSources(h)) {
     try {
       const res = await fetch(src, { signal: AbortSignal.timeout(15_000) });
