@@ -5,11 +5,17 @@ import { usePlanStore } from '../state/planStore';
 import { useOverlaps } from '../state/useOverlaps';
 import { formatLength } from '../lib/units';
 import { localOutline, badgeAnchor } from '../lib/footprint';
+import { roomLabel, roomSummary, straighten } from '../lib/rooms';
 import type { FurnitureItem, PlacingTemplate, Point } from '../types';
 import { CalibrationDistanceModal } from './CalibrationDistanceModal';
 
 const OVERLAP_RED = '#e02424';
 const WALL_COLOR = '#3a3530';
+const ROOM_COLOR = '#1a7a4a';
+const ROOM_FILL = 'rgba(26, 122, 74, 0.10)';
+/** Clicking this close (screen px) to a room's first corner closes it. */
+const CLOSE_ROOM_SCREEN_PX = 10;
+const ROOM_STRAIGHTEN_DEG = 6;
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 8;
 const FIT_PADDING = 40;
@@ -42,7 +48,7 @@ export function FloorplanCanvas() {
   const pendingSecond = usePlanStore(s => s.pendingCalibrationSecond);
   const selectedId = usePlanStore(s => s.selectedFurnitureId);
   const placingTemplate = usePlanStore(s => s.placingTemplate);
-  const draftWallPoints = usePlanStore(s => s.draftWallPoints);
+  const draftPoints = usePlanStore(s => s.draftPoints);
 
   const addCalibrationPoint = usePlanStore(s => s.addCalibrationPoint);
   const commitCalibration = usePlanStore(s => s.commitCalibration);
@@ -50,8 +56,9 @@ export function FloorplanCanvas() {
   const placeFurnitureAt = usePlanStore(s => s.placeFurnitureAt);
   const selectFurniture = usePlanStore(s => s.selectFurniture);
   const updateFurniture = usePlanStore(s => s.updateFurniture);
-  const addWallPoint = usePlanStore(s => s.addWallPoint);
+  const addDraftPoint = usePlanStore(s => s.addDraftPoint);
   const finishWall = usePlanStore(s => s.finishWall);
+  const finishRoom = usePlanStore(s => s.finishRoom);
 
   const overlapping = useOverlaps();
   const imageEl = useImage(plan?.imageDataUrl ?? null);
@@ -131,8 +138,16 @@ export function FloorplanCanvas() {
   }
 
   // Only the tools that draw a preview need the live cursor position.
-  const tracksHover = mode === 'placing' || mode === 'wall' || (mode === 'calibrate' && !!pendingPoint && !pendingSecond);
+  const tracksHover =
+    mode === 'placing' || mode === 'wall' || mode === 'room' || (mode === 'calibrate' && !!pendingPoint && !pendingSecond);
   const [hoverPoint, setHoverPoint] = useState<Point | null>(null);
+
+  // Room tool: snap back onto the first corner to close, otherwise straighten edges.
+  const closesRoom = (p: Point) =>
+    draftPoints.length >= 3 &&
+    Math.hypot(p.x - draftPoints[0].x, p.y - draftPoints[0].y) <= CLOSE_ROOM_SCREEN_PX / view.scale;
+  const roomPoint = (p: Point) =>
+    closesRoom(p) ? draftPoints[0] : straighten(draftPoints[draftPoints.length - 1], p, ROOM_STRAIGHTEN_DEG);
 
   function handleMouseMove(e: Konva.KonvaEventObject<MouseEvent>) {
     if (pan.current.active) {
@@ -144,7 +159,9 @@ export function FloorplanCanvas() {
       setView(v => ({ ...v, x: v.x + dx, y: v.y + dy }));
       return;
     }
-    if (tracksHover) setHoverPoint(imagePoint());
+    if (!tracksHover) return;
+    const p = imagePoint();
+    setHoverPoint(p && mode === 'room' ? roomPoint(p) : p);
   }
 
   // Our own double-click detection. Konva's `dblclick` counts any two releases —
@@ -168,7 +185,10 @@ export function FloorplanCanvas() {
       placeFurnitureAt(pt.x, pt.y);
     } else if (mode === 'wall') {
       if (isDouble) finishWall();
-      else addWallPoint(pt, samePointPx);
+      else addDraftPoint(pt, samePointPx);
+    } else if (mode === 'room') {
+      if (isDouble || closesRoom(pt)) finishRoom();
+      else addDraftPoint(roomPoint(pt), samePointPx);
     } else {
       // Furniture clicks stop propagation, so reaching here means empty space.
       selectFurniture(null);
@@ -235,12 +255,41 @@ export function FloorplanCanvas() {
             />
           ))}
 
+          {/* Measured rooms (under the furniture, never clickable) */}
+          {plan.rooms.map((room, i) => (
+            <RoomShape
+              key={room.id}
+              points={room.points}
+              label={roomLabel(room, i)}
+              detail={pxPerMm ? roomSummary(room.points, pxPerMm, units) : null}
+              marked={room.role !== 'other'}
+              viewScale={view.scale}
+            />
+          ))}
+
+          {/* In-progress room */}
+          {mode === 'room' && draftPoints.length > 0 && (
+            <Group listening={false}>
+              <Line
+                points={[...draftPoints, ...(hoverPoint ? [hoverPoint] : [])].flatMap(p => [p.x, p.y])}
+                stroke={ROOM_COLOR}
+                strokeWidth={2 / view.scale}
+                dash={[8 / view.scale, 5 / view.scale]}
+                closed={!!hoverPoint && hoverPoint === draftPoints[0]}
+                fill={hoverPoint === draftPoints[0] ? ROOM_FILL : undefined}
+              />
+              {draftPoints.map((p, i) => (
+                <Circle key={i} x={p.x} y={p.y} radius={(i === 0 ? 6 : 4) / view.scale} fill={ROOM_COLOR} />
+              ))}
+            </Group>
+          )}
+
           {/* In-progress wall */}
-          {mode === 'wall' && draftWallPoints.length > 0 && (
+          {mode === 'wall' && draftPoints.length > 0 && (
             <>
               <Line
                 points={[
-                  ...draftWallPoints.flatMap(p => [p.x, p.y]),
+                  ...draftPoints.flatMap(p => [p.x, p.y]),
                   ...(hoverPoint ? [hoverPoint.x, hoverPoint.y] : []),
                 ]}
                 stroke={WALL_COLOR}
@@ -251,7 +300,7 @@ export function FloorplanCanvas() {
                 opacity={0.7}
                 listening={false}
               />
-              {draftWallPoints.map((p, i) => (
+              {draftPoints.map((p, i) => (
                 <Circle key={i} x={p.x} y={p.y} radius={4 / view.scale} fill={WALL_COLOR} listening={false} />
               ))}
             </>
@@ -365,6 +414,47 @@ function CalibrationLine({ p1, p2, label, viewScale }: { p1: Point; p2: Point; l
         fontSize={13 / viewScale}
         fontStyle="bold"
         fill="#1a7a4a"
+      />
+    </Group>
+  );
+}
+
+function RoomShape({
+  points,
+  label,
+  detail,
+  marked,
+  viewScale,
+}: {
+  points: Point[];
+  label: string;
+  detail: string | null;
+  marked: boolean;
+  viewScale: number;
+}) {
+  const cx = points.reduce((s, p) => s + p.x, 0) / points.length;
+  const cy = points.reduce((s, p) => s + p.y, 0) / points.length;
+  const labelWidth = 220 / viewScale;
+  return (
+    <Group listening={false}>
+      <Line
+        points={points.flatMap(p => [p.x, p.y])}
+        closed
+        fill={ROOM_FILL}
+        stroke={ROOM_COLOR}
+        strokeWidth={(marked ? 2.5 : 1.5) / viewScale}
+        dash={marked ? undefined : [6 / viewScale, 4 / viewScale]}
+      />
+      <Text
+        x={cx - labelWidth / 2}
+        y={cy - (detail ? 16 : 8) / viewScale}
+        width={labelWidth}
+        align="center"
+        text={detail ? `${label}\n${detail}` : label}
+        lineHeight={1.3}
+        fontSize={12 / viewScale}
+        fontStyle={marked ? 'bold' : 'normal'}
+        fill={ROOM_COLOR}
       />
     </Group>
   );

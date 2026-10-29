@@ -1,4 +1,5 @@
-import type { PlanLink } from '../types';
+import type { PlanLink, Room, RoomRole } from '../types';
+import { mm2ToSqft, roomMetrics } from './rooms';
 
 /**
  * HouseHunter's "Plan furniture" button opens FloorplanStudio with a floorplan in
@@ -71,4 +72,39 @@ export async function fetchFloorplan(h: Handoff): Promise<Blob> {
     }
   }
   throw new Error('Could not fetch the floorplan.');
+}
+
+// — the way back: measurements for HouseHunter —
+
+/** Metres, longer side first, as HouseHunter stores room sizes. */
+type Dims = [number, number];
+export type Measurement = { sqft: number | null; kitchen: Dims | null; bed2: Dims | null };
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/** What the plan's marked rooms say. Unmarked ('other') rooms aren't sent. */
+export function planMeasurement(rooms: Room[], pxPerMm: number): Measurement {
+  const metrics = (role: RoomRole) => {
+    const room = rooms.find(r => r.role === role);
+    return room && room.points.length >= 3 ? roomMetrics(room.points, pxPerMm) : null;
+  };
+  const dims = (role: RoomRole): Dims | null => {
+    const m = metrics(role);
+    return m ? [round2(m.lengthMm / 1000), round2(m.widthMm / 1000)] : null;
+  };
+  const flat = metrics('flat');
+  return { sqft: flat ? Math.round(mm2ToSqft(flat.areaMm2)) : null, kitchen: dims('kitchen'), bed2: dims('bedroom2') };
+}
+
+/**
+ * HouseHunter, opened on the listing with the measurements in its hash. It asks
+ * before saving anything. Null when there's nothing to send or no way back.
+ */
+export function measurementLink(link: PlanLink, m: Measurement): string | null {
+  if (!link.returnUrl || (m.sqft === null && !m.kitchen && !m.bed2)) return null;
+  const p = new URLSearchParams({ listing: link.listingId, from: 'floorplanstudio' });
+  if (m.sqft !== null) p.set('sqft', String(m.sqft));
+  if (m.kitchen) p.set('kitchen', m.kitchen.join('x'));
+  if (m.bed2) p.set('bed2', m.bed2.join('x'));
+  return `${link.returnUrl.split('#')[0]}#${p}`;
 }

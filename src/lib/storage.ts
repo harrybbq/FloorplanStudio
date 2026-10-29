@@ -63,7 +63,12 @@ export function loadPlans(): Plan[] {
     } else {
       imageDataUrl = read(imageKey(p.id));
     }
-    return { ...p, imageDataUrl, walls: Array.isArray(p.walls) ? p.walls : [] };
+    return {
+      ...p,
+      imageDataUrl,
+      walls: Array.isArray(p.walls) ? p.walls : [],
+      rooms: Array.isArray(p.rooms) ? p.rooms : [],
+    };
   });
 
   if (migrated) savePlans(plans);

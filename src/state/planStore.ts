@@ -7,6 +7,8 @@ import type {
   Plan,
   PlanLink,
   Point,
+  Room,
+  RoomRole,
   SavedFurniture,
   UnitSystem,
   Wall,
@@ -46,6 +48,7 @@ function blankPlan(name: string): Plan {
     calibration: null,
     furniture: [],
     walls: [],
+    rooms: [],
     createdAt: now,
     updatedAt: now,
   };
@@ -64,8 +67,8 @@ interface PlanState {
   pendingCalibrationSecond: Point | null;
   /** Furniture template currently being placed. */
   placingTemplate: PlacingTemplate | null;
-  /** In-progress wall polyline (image-space points). */
-  draftWallPoints: Point[];
+  /** In-progress wall polyline or room outline (image-space points). */
+  draftPoints: Point[];
   /** Cross-plan furniture library. */
   library: SavedFurniture[];
   /** The most recent delete, so it can be undone. */
@@ -115,12 +118,20 @@ interface PlanState {
 
   // — walls —
   startWall: () => void;
-  /** Ignores a point within `minDist` px of the previous one (e.g. a double-click). */
-  addWallPoint: (p: Point, minDist: number) => void;
+  /** Wall or room tool: ignores a point within `minDist` px of the previous one (e.g. a double-click). */
+  addDraftPoint: (p: Point, minDist: number) => void;
   finishWall: () => void;
   cancelWall: () => void;
   deleteWall: (id: string) => void;
   clearWalls: () => void;
+
+  // — rooms —
+  startRoom: () => void;
+  /** Close the outline (needs 3+ corners). */
+  finishRoom: () => void;
+  deleteRoom: (id: string) => void;
+  /** Kitchen / bedroom 2 / whole flat are one per plan: taking one frees it from any other room. */
+  setRoomRole: (id: string, role: RoomRole) => void;
 
   // — library —
   addToLibrary: (item: Omit<SavedFurniture, 'id'>) => void;
@@ -137,7 +148,7 @@ const IDLE = {
   pendingCalibrationPoint: null,
   pendingCalibrationSecond: null,
   placingTemplate: null,
-  draftWallPoints: [] as Point[],
+  draftPoints: [] as Point[],
 };
 
 /** IDLE plus everything that belongs to the previous plan. */
@@ -340,15 +351,15 @@ export const usePlanStore = create<PlanState>((set, get) => {
     // — walls —
     startWall: () => set({ ...IDLE, mode: 'wall', selectedFurnitureId: null }),
 
-    addWallPoint: (p, minDist) => {
-      const pts = get().draftWallPoints;
+    addDraftPoint: (p, minDist) => {
+      const pts = get().draftPoints;
       const last = pts[pts.length - 1];
       if (last && Math.hypot(p.x - last.x, p.y - last.y) < minDist) return;
-      set({ draftWallPoints: [...pts, p] });
+      set({ draftPoints: [...pts, p] });
     },
 
     finishWall: () => {
-      const points = get().draftWallPoints;
+      const points = get().draftPoints;
       if (points.length < 2) return set(IDLE);
       const wall: Wall = { id: newId(), points };
       mutateActive(p => ({ ...p, walls: [...p.walls, wall] }), IDLE);
@@ -359,6 +370,26 @@ export const usePlanStore = create<PlanState>((set, get) => {
     deleteWall: id => mutateActive(p => ({ ...p, walls: p.walls.filter(w => w.id !== id) })),
 
     clearWalls: () => mutateActive(p => ({ ...p, walls: [] })),
+
+    // — rooms —
+    startRoom: () => set({ ...IDLE, mode: 'room', selectedFurnitureId: null }),
+
+    finishRoom: () => {
+      const points = get().draftPoints;
+      if (points.length < 3) return set(IDLE);
+      const room: Room = { id: newId(), role: 'other', points };
+      mutateActive(p => ({ ...p, rooms: [...p.rooms, room] }), IDLE);
+    },
+
+    deleteRoom: id => mutateActive(p => ({ ...p, rooms: p.rooms.filter(r => r.id !== id) })),
+
+    setRoomRole: (id, role) =>
+      mutateActive(p => ({
+        ...p,
+        rooms: p.rooms.map(r =>
+          r.id === id ? { ...r, role } : role !== 'other' && r.role === role ? { ...r, role: 'other' } : r
+        ),
+      })),
 
     // — library —
     addToLibrary: item => {

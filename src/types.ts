@@ -4,7 +4,7 @@
 
 export type UnitSystem = 'metric' | 'imperial';
 
-export type Mode = 'select' | 'calibrate' | 'placing' | 'wall';
+export type Mode = 'select' | 'calibrate' | 'placing' | 'wall' | 'room';
 
 export type Point = { x: number; y: number };
 
@@ -32,6 +32,16 @@ export type FurnitureShape =
 /** A traced wall — a polyline in image pixel-space (>= 2 points). */
 export type Wall = {
   id: string;
+  points: Point[];
+};
+
+/** `flat`, `kitchen` and `bedroom2` feed HouseHunter's floor area, kitchen and bedroom-2 fields. */
+export type RoomRole = 'other' | 'flat' | 'kitchen' | 'bedroom2';
+
+/** A traced room outline (image-space points), used for measuring, not collisions. */
+export type Room = {
+  id: string;
+  role: RoomRole;
   points: Point[];
 };
 
@@ -87,6 +97,8 @@ export type Plan = {
   furniture: FurnitureItem[];
   /** Traced walls used for overlap detection (older saves are migrated on load). */
   walls: Wall[];
+  /** Measured rooms (older saves are migrated on load). */
+  rooms: Room[];
   link?: PlanLink;
   createdAt: number;
   updatedAt: number;

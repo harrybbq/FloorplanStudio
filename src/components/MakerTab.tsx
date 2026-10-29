@@ -3,6 +3,7 @@ import { Stage, Layer, Line, Circle, Text as KonvaText } from 'react-konva';
 import type Konva from 'konva';
 import type { FurnitureShape, PlacingTemplate, Point, UnitSystem } from '../types';
 import { formatLength, parseLength, toInputValue } from '../lib/units';
+import { straighten } from '../lib/rooms';
 import {
   DimensionFields,
   EMPTY_DIMENSIONS,
@@ -74,16 +75,7 @@ export function MakerTab({
 
   /** Grid snap, then straighten the edge from the previous corner. */
   function snap(raw: Point): Point {
-    const p = gridSnap(raw);
-    const last = points[points.length - 1];
-    if (!last) return p;
-    const adx = Math.abs(p.x - last.x);
-    const ady = Math.abs(p.y - last.y);
-    if (adx === 0 && ady === 0) return p;
-    const angle = (Math.atan2(ady, adx) * 180) / Math.PI; // 0 = horizontal
-    if (angle < ORTHO_SNAP_DEG) return { x: p.x, y: last.y };
-    if (angle > 90 - ORTHO_SNAP_DEG) return { x: last.x, y: p.y };
-    return p;
+    return straighten(points[points.length - 1], gridSnap(raw), ORTHO_SNAP_DEG);
   }
 
   const pointer = (e: Konva.KonvaEventObject<Event>): Point | null => e.target.getStage()?.getPointerPosition() ?? null;

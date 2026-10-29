@@ -21,9 +21,10 @@ export default function App() {
   const units = usePlanStore(s => s.units);
   const mode = usePlanStore(s => s.mode);
   const hasFirstCalibrationPoint = usePlanStore(s => !!s.pendingCalibrationPoint);
-  const draftWallCount = usePlanStore(s => s.draftWallPoints.length);
+  const draftCount = usePlanStore(s => s.draftPoints.length);
   const saveFailed = usePlanStore(s => s.saveFailed);
   const finishWall = usePlanStore(s => s.finishWall);
+  const finishRoom = usePlanStore(s => s.finishRoom);
   const setMode = usePlanStore(s => s.setMode);
   const importImage = useImageImport();
 
@@ -54,15 +55,18 @@ export default function App() {
       if (key === 'Escape') {
         if (s.mode !== 'select') s.setMode('select');
         else s.selectFurniture(null);
-      } else if (key === 'Enter' && s.mode === 'wall') {
+      } else if (key === 'Enter' && (s.mode === 'wall' || s.mode === 'room')) {
         e.preventDefault(); // don't also "click" a focused toolbar button
-        s.finishWall();
+        if (s.mode === 'wall') s.finishWall();
+        else s.finishRoom();
       } else if (key === 'v') {
         s.setMode('select');
       } else if (key === 'c' && p?.imageDataUrl) {
         s.startCalibration();
       } else if (key === 'w' && p?.imageDataUrl) {
         s.startWall();
+      } else if (key === 'm' && p?.imageDataUrl) {
+        s.startRoom();
       } else if (key === 'a' && p?.calibration) {
         setAddOpen(true);
       } else if (sel && (key === 'Delete' || key === 'Backspace')) {
@@ -141,8 +145,15 @@ export default function App() {
           {showCanvas && mode === 'placing' && <ModeBanner>Click on the plan to place. Esc to cancel.</ModeBanner>}
           {showCanvas && mode === 'wall' && (
             <ModeBanner>
-              Click to trace a wall ({draftWallCount} {draftWallCount === 1 ? 'point' : 'points'}). Double-click or Enter to finish.
+              Click to trace a wall ({draftCount} {draftCount === 1 ? 'point' : 'points'}). Double-click or Enter to finish.
               <BannerButton onClick={finishWall}>Finish</BannerButton>
+              <BannerButton onClick={() => setMode('select')}>Cancel (Esc)</BannerButton>
+            </ModeBanner>
+          )}
+          {showCanvas && mode === 'room' && (
+            <ModeBanner>
+              Click the room's corners ({draftCount} so far). Click the first corner, double-click or Enter to close.
+              <BannerButton onClick={finishRoom}>Close</BannerButton>
               <BannerButton onClick={() => setMode('select')}>Cancel (Esc)</BannerButton>
             </ModeBanner>
           )}

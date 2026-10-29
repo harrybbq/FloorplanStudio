@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { floorplanSources, parseHandoff } from '../handoff';
+import { floorplanSources, measurementLink, parseHandoff, planMeasurement } from '../handoff';
+import type { PlanLink, Room } from '../../types';
 
 const FLOORPLAN = 'https://media.rightmove.co.uk/property-floorplan/a.jpeg';
 
@@ -63,5 +64,47 @@ describe('floorplanSources', () => {
       FLOORPLAN,
     ]);
     expect(floorplanSources(parseHandoff(hash({}))!)).toEqual([FLOORPLAN]);
+  });
+});
+
+const rect = (w: number, h: number) => [
+  { x: 0, y: 0 },
+  { x: w, y: 0 },
+  { x: w, y: h },
+  { x: 0, y: h },
+];
+const room = (role: Room['role'], w: number, h: number): Room => ({ id: role, role, points: rect(w, h) });
+
+describe('planMeasurement', () => {
+  it('measures the marked rooms in metres and sq ft (0.1 px per mm)', () => {
+    const rooms = [room('flat', 950, 900), room('kitchen', 391, 493), room('bedroom2', 295, 458), room('other', 100, 100)];
+    // 9.5 × 9 m = 85.5 m² = 920 sq ft
+    expect(planMeasurement(rooms, 0.1)).toEqual({ sqft: 920, kitchen: [4.93, 3.91], bed2: [4.58, 2.95] });
+  });
+
+  it('sends nothing for unmarked rooms', () => {
+    expect(planMeasurement([room('other', 500, 400)], 0.1)).toEqual({ sqft: null, kitchen: null, bed2: null });
+  });
+});
+
+describe('measurementLink', () => {
+  const link: PlanLink = {
+    app: 'househunter',
+    listingId: 'rm-1',
+    floorplanUrl: FLOORPLAN,
+    listingUrl: null,
+    returnUrl: 'http://localhost:5190/#listing=rm-1',
+  };
+
+  it('opens the listing in HouseHunter with the measurements', () => {
+    const url = measurementLink(link, { sqft: 920, kitchen: [4.93, 3.91], bed2: null })!;
+    expect(url.startsWith('http://localhost:5190/#')).toBe(true);
+    const p = new URLSearchParams(url.split('#')[1]);
+    expect(Object.fromEntries(p)).toEqual({ listing: 'rm-1', from: 'floorplanstudio', sqft: '920', kitchen: '4.93x3.91' });
+  });
+
+  it('is null with nothing to send or no way back', () => {
+    expect(measurementLink(link, { sqft: null, kitchen: null, bed2: null })).toBeNull();
+    expect(measurementLink({ ...link, returnUrl: null }, { sqft: 920, kitchen: null, bed2: null })).toBeNull();
   });
 });

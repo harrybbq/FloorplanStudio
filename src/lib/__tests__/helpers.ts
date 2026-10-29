@@ -1,4 +1,6 @@
-import type { FurnitureItem, FurnitureShape, Point } from '../../types';
+import type { FurnitureItem, FurnitureShape } from '../../types';
+
+export { polygonArea } from '../rooms';
 
 /** Build a furniture item with sensible defaults (1px = 1mm when pxPerMm = 1). */
 export function item(
@@ -22,14 +24,4 @@ export function item(
     confidence: 'user-entered',
     color: '#000',
   };
-}
-
-export function polygonArea(poly: Point[]): number {
-  let a = 0;
-  for (let i = 0; i < poly.length; i++) {
-    const p = poly[i];
-    const q = poly[(i + 1) % poly.length];
-    a += p.x * q.y - q.x * p.y;
-  }
-  return Math.abs(a / 2);
 }

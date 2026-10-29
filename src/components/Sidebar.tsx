@@ -3,9 +3,12 @@ import { usePlanStore } from '../state/planStore';
 import { useOverlaps } from '../state/useOverlaps';
 import { formatLength } from '../lib/units';
 import { confidenceMeta, sourceLabel } from '../lib/furniture/provenance';
-import type { FurnitureItem, PlanLink, Wall } from '../types';
+import { ROOM_ROLES, roomSummary } from '../lib/rooms';
+import { measurementLink, planMeasurement } from '../lib/handoff';
+import type { FurnitureItem, PlanLink, Room, Wall } from '../types';
 
 const NO_WALLS: Wall[] = [];
+const NO_ROOMS: Room[] = [];
 
 /** Duplicates land this far (mm, diagonally) from the original. */
 export const DUPLICATE_OFFSET_MM = 200;
@@ -24,6 +27,7 @@ export function Sidebar() {
       </section>
 
       <WallsSection />
+      <RoomsSection />
 
       {overlapping.size > 0 && (
         <div className="px-3 py-2 bg-danger/10 border-b border-danger/20 text-xs text-danger-dark font-medium" role="status">
@@ -310,6 +314,7 @@ const SHORTCUTS: [string, string][] = [
   ['V', 'Select'],
   ['C', 'Calibrate'],
   ['W', 'Trace walls (Enter / double-click to finish)'],
+  ['M', 'Measure a room (click the first corner to close)'],
   ['A', 'Add furniture'],
   ['R / Shift+R', 'Rotate 15°'],
   ['F', 'Flip'],
@@ -320,6 +325,77 @@ const SHORTCUTS: [string, string][] = [
   ['Wheel · Middle-drag', 'Zoom · Pan'],
   ['Ctrl/⌘+V', 'Paste a floorplan image'],
 ];
+
+function RoomsSection() {
+  const rooms = usePlanStore(s => s.active()?.rooms ?? NO_ROOMS);
+  const hasImage = usePlanStore(s => !!s.active()?.imageDataUrl);
+  const pxPerMm = usePlanStore(s => s.active()?.calibration?.pxPerMm ?? null);
+  const link = usePlanStore(s => s.active()?.link);
+  const units = usePlanStore(s => s.units);
+  const startRoom = usePlanStore(s => s.startRoom);
+  const deleteRoom = usePlanStore(s => s.deleteRoom);
+  const setRoomRole = usePlanStore(s => s.setRoomRole);
+
+  const sendUrl = link && pxPerMm ? measurementLink(link, planMeasurement(rooms, pxPerMm)) : null;
+
+  return (
+    <section className="p-3 border-b border-line">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="label">Rooms {rooms.length > 0 && `(${rooms.length})`}</h3>
+        <button className="btn-ghost text-xs" onClick={startRoom} disabled={!hasImage}>
+          + Measure
+        </button>
+      </div>
+      {rooms.length === 0 ? (
+        <p className="text-xs text-ink-muted">Trace a room's corners to get its size and area.</p>
+      ) : (
+        <ul className="space-y-1 max-h-[132px] overflow-y-auto">
+          {rooms.map((room, i) => (
+            <li key={room.id} className="px-2 py-1 rounded-md hover:bg-bg-overlay group">
+              <div className="flex items-center justify-between gap-2">
+                <select
+                  aria-label={`What room ${i + 1} is`}
+                  className="text-sm bg-transparent text-ink-mid rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-em"
+                  value={room.role}
+                  onChange={e => setRoomRole(room.id, e.target.value as Room['role'])}
+                >
+                  {ROOM_ROLES.map(r => (
+                    <option key={r.value} value={r.value}>
+                      {r.value === 'other' ? `Room ${i + 1}` : r.label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="text-ink-muted hover:text-amber text-xs reveal-on-hover"
+                  aria-label={`Delete room ${i + 1}`}
+                  title="Delete room"
+                  onClick={() => deleteRoom(room.id)}
+                >
+                  ✕
+                </button>
+              </div>
+              <p className="text-xs text-ink-muted">{pxPerMm ? roomSummary(room.points, pxPerMm, units) : 'Calibrate to measure'}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+      {link &&
+        (sendUrl ? (
+          <>
+            {/* Named target: HouseHunter names its tab, so this lands there. */}
+            <a className="btn-primary text-xs w-full justify-center mt-2" href={sendUrl} target="househunter">
+              Send to HouseHunter
+            </a>
+            <p className="text-[11px] text-ink-muted mt-1">You'll confirm in HouseHunter before anything is saved.</p>
+          </>
+        ) : (
+          <p className="text-xs text-ink-muted mt-2">
+            {pxPerMm ? 'Mark' : 'Calibrate, then mark'} the whole flat, the kitchen or bedroom 2 to send their sizes to HouseHunter.
+          </p>
+        ))}
+    </section>
+  );
+}
 
 function ShortcutHelp() {
   return (

@@ -15,6 +15,7 @@ export function Toolbar({ onAddFurniture }: { onAddFurniture: () => void }) {
   const startCalibration = usePlanStore(s => s.startCalibration);
   const clearCalibration = usePlanStore(s => s.clearCalibration);
   const startWall = usePlanStore(s => s.startWall);
+  const startRoom = usePlanStore(s => s.startRoom);
   const clearPlanImage = usePlanStore(s => s.clearPlanImage);
 
   const hasImage = !!plan?.imageDataUrl;
@@ -47,6 +48,9 @@ export function Toolbar({ onAddFurniture }: { onAddFurniture: () => void }) {
         )}
         <button className={`btn ${mode === 'wall' ? 'btn-active' : ''}`} onClick={startWall} disabled={!hasImage} title="Trace walls (W)">
           Wall
+        </button>
+        <button className={`btn ${mode === 'room' ? 'btn-active' : ''}`} onClick={startRoom} disabled={!hasImage} title="Measure a room (M)">
+          Room
         </button>
         <button
           className="btn-primary"
