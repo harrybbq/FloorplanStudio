@@ -1,111 +1,154 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Toolbar } from './components/Toolbar';
-import { Sidebar } from './components/Sidebar';
+import { DUPLICATE_OFFSET_MM, Sidebar } from './components/Sidebar';
 import { FloorplanCanvas } from './components/FloorplanCanvas';
 import { EmptyState } from './components/EmptyState';
 import { AddFurnitureModal } from './components/AddFurnitureModal';
 import { ensureInitialPlan, usePlanStore } from './state/planStore';
+import { useImageImport } from './state/useImageImport';
+import { imageFromItems } from './lib/image';
+
+const NUDGE_MM = 10;
+const NUDGE_FAST_MM = 100;
+const UNDO_TOAST_MS = 6000;
+
+const isTyping = (t: EventTarget | null) =>
+  t instanceof HTMLElement && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
 
 export default function App() {
   const plan = usePlanStore(s => s.active());
   const units = usePlanStore(s => s.units);
   const mode = usePlanStore(s => s.mode);
-  const selectedId = usePlanStore(s => s.selectedFurnitureId);
+  const hasFirstCalibrationPoint = usePlanStore(s => !!s.pendingCalibrationPoint);
   const draftWallCount = usePlanStore(s => s.draftWallPoints.length);
-  const deleteFurniture = usePlanStore(s => s.deleteFurniture);
-  const rotateFurniture = usePlanStore(s => s.rotateFurniture);
-  const flipFurniture = usePlanStore(s => s.flipFurniture);
-  const startCalibration = usePlanStore(s => s.startCalibration);
-  const startWall = usePlanStore(s => s.startWall);
+  const saveFailed = usePlanStore(s => s.saveFailed);
   const finishWall = usePlanStore(s => s.finishWall);
-  const cancelWall = usePlanStore(s => s.cancelWall);
   const setMode = usePlanStore(s => s.setMode);
-  const cancelPlacing = usePlanStore(s => s.cancelPlacing);
+  const importImage = useImageImport();
 
   const [addOpen, setAddOpen] = useState(false);
 
-  useEffect(() => {
-    ensureInitialPlan();
-  }, []);
+  useEffect(ensureInitialPlan, []);
 
-  // Global shortcuts: V select · C calibrate · W wall · A add furniture · R rotate · Del delete.
+  // Global shortcuts. State is read at key time, so this registers once.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      // Ignore when typing in inputs.
-      const target = e.target as HTMLElement | null;
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+      const s = usePlanStore.getState();
+      const cmd = e.ctrlKey || e.metaKey;
+
+      if (cmd && !e.shiftKey && e.key.toLowerCase() === 'z' && s.lastDeleted && !isTyping(e.target)) {
+        e.preventDefault();
+        s.undoDelete();
         return;
       }
-      if (e.key === 'Enter' && mode === 'wall') {
-        finishWall();
-      } else if (e.key === 'v' || e.key === 'V') {
-        if (mode === 'placing') cancelPlacing();
-        if (mode === 'wall') cancelWall();
-        setMode('select');
-      } else if ((e.key === 'c' || e.key === 'C') && plan?.imageDataUrl) {
-        startCalibration();
-      } else if ((e.key === 'w' || e.key === 'W') && plan?.imageDataUrl) {
-        startWall();
-      } else if ((e.key === 'a' || e.key === 'A') && plan?.calibration) {
+      // Leave browser/OS shortcuts (Ctrl+C, Ctrl+R…), dialogs and text fields alone.
+      if (cmd || e.altKey || isTyping(e.target) || document.querySelector('[aria-modal="true"]')) return;
+
+      const p = s.active();
+      const sel = s.selectedFurnitureId;
+      const pxPerMm = p?.calibration?.pxPerMm ?? 0;
+      const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+
+      if (key === 'Escape') {
+        if (s.mode !== 'select') s.setMode('select');
+        else s.selectFurniture(null);
+      } else if (key === 'Enter' && s.mode === 'wall') {
+        e.preventDefault(); // don't also "click" a focused toolbar button
+        s.finishWall();
+      } else if (key === 'v') {
+        s.setMode('select');
+      } else if (key === 'c' && p?.imageDataUrl) {
+        s.startCalibration();
+      } else if (key === 'w' && p?.imageDataUrl) {
+        s.startWall();
+      } else if (key === 'a' && p?.calibration) {
         setAddOpen(true);
-      } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
-        deleteFurniture(selectedId);
-      } else if ((e.key === 'r' || e.key === 'R') && selectedId) {
-        rotateFurniture(selectedId, e.shiftKey ? -15 : 15);
-      } else if ((e.key === 'f' || e.key === 'F') && selectedId) {
-        flipFurniture(selectedId);
+      } else if (sel && (key === 'Delete' || key === 'Backspace')) {
+        e.preventDefault();
+        s.deleteFurniture(sel);
+      } else if (sel && key === 'r') {
+        s.rotateFurniture(sel, e.shiftKey ? -15 : 15);
+      } else if (sel && key === 'f') {
+        s.flipFurniture(sel);
+      } else if (sel && key === 'd' && pxPerMm) {
+        s.duplicateFurniture(sel, DUPLICATE_OFFSET_MM * pxPerMm);
+      } else if (sel && pxPerMm && key.startsWith('Arrow')) {
+        e.preventDefault();
+        const step = (e.shiftKey ? NUDGE_FAST_MM : NUDGE_MM) * pxPerMm;
+        const dx = key === 'ArrowLeft' ? -step : key === 'ArrowRight' ? step : 0;
+        const dy = key === 'ArrowUp' ? -step : key === 'ArrowDown' ? step : 0;
+        s.updateFurniture(sel, f => ({ x: f.x + dx, y: f.y + dy }));
       }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [mode, plan?.imageDataUrl, plan?.calibration, selectedId, setMode, cancelPlacing, cancelWall, startCalibration, startWall, finishWall, deleteFurniture, rotateFurniture, flipFurniture]);
+  }, []);
+
+  // Paste an image anywhere (not into a text field) to load or replace the floorplan.
+  useEffect(() => {
+    function onPaste(e: ClipboardEvent) {
+      if (isTyping(e.target)) return;
+      const file = imageFromItems(e.clipboardData?.items);
+      if (file) {
+        e.preventDefault();
+        void importImage(file);
+      }
+    }
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [importImage]);
 
   const showCanvas = !!plan?.imageDataUrl;
 
   return (
-    <div className="h-screen w-screen flex flex-col">
+    <div
+      className="h-screen w-screen flex flex-col"
+      onDragOver={e => {
+        if (e.dataTransfer.types.includes('Files')) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+        }
+      }}
+      onDrop={e => {
+        const file = imageFromItems(e.dataTransfer.items);
+        if (file) {
+          e.preventDefault();
+          void importImage(file);
+        }
+      }}
+    >
       <Toolbar onAddFurniture={() => setAddOpen(true)} />
+      {saveFailed && (
+        <div className="bg-danger text-white text-sm px-4 py-2 text-center" role="alert">
+          Changes aren't being saved — browser storage is full. Delete an unused plan or use a smaller image.
+        </div>
+      )}
       <div className="flex-1 flex overflow-hidden">
         <Sidebar />
         <main className="flex-1 relative bg-bg-base overflow-hidden">
           {showCanvas ? <FloorplanCanvas /> : <EmptyState />}
 
-          {/* Hint overlays for active modes */}
           {showCanvas && mode === 'calibrate' && (
             <ModeBanner>
-              {usePlanStore.getState().pendingCalibrationPoint
+              {hasFirstCalibrationPoint
                 ? 'Click the second point — then enter the real distance.'
                 : 'Click the first point of a known distance.'}
-              <button
-                className="ml-3 btn-ghost text-xs"
-                onClick={() => usePlanStore.getState().cancelPendingCalibration()}
-              >
-                Cancel (Esc)
-              </button>
+              <BannerButton onClick={() => setMode('select')}>Cancel (Esc)</BannerButton>
             </ModeBanner>
           )}
-          {showCanvas && mode === 'placing' && (
-            <ModeBanner>
-              Click on the plan to place. Esc to cancel.
-            </ModeBanner>
-          )}
+          {showCanvas && mode === 'placing' && <ModeBanner>Click on the plan to place. Esc to cancel.</ModeBanner>}
           {showCanvas && mode === 'wall' && (
             <ModeBanner>
-              Click to trace a wall ({draftWallCount} {draftWallCount === 1 ? 'point' : 'points'}).
-              Double-click or Enter to finish.
-              <button className="ml-2 btn-ghost text-xs !text-white" onClick={() => finishWall()}>
-                Finish
-              </button>
-              <button className="btn-ghost text-xs !text-white" onClick={() => cancelWall()}>
-                Cancel (Esc)
-              </button>
+              Click to trace a wall ({draftWallCount} {draftWallCount === 1 ? 'point' : 'points'}). Double-click or Enter to finish.
+              <BannerButton onClick={finishWall}>Finish</BannerButton>
+              <BannerButton onClick={() => setMode('select')}>Cancel (Esc)</BannerButton>
             </ModeBanner>
           )}
           {showCanvas && mode === 'select' && !plan?.calibration && (
-            <ModeBanner tone="warn">
-              No scale set yet — calibrate before placing furniture.
-            </ModeBanner>
+            <ModeBanner tone="warn">No scale set yet — calibrate before placing furniture.</ModeBanner>
           )}
+
+          <UndoToast />
         </main>
       </div>
 
@@ -114,11 +157,47 @@ export default function App() {
   );
 }
 
-function ModeBanner({ children, tone = 'info' }: { children: React.ReactNode; tone?: 'info' | 'warn' }) {
+function ModeBanner({ children, tone = 'info' }: { children: ReactNode; tone?: 'info' | 'warn' }) {
   const bg = tone === 'warn' ? 'bg-amber/90' : 'bg-em/90';
   return (
-    <div className={`absolute top-4 left-1/2 -translate-x-1/2 ${bg} text-white text-sm px-4 py-2 rounded-full shadow-md flex items-center gap-2`}>
+    <div
+      className={`absolute top-4 left-1/2 -translate-x-1/2 ${bg} text-white text-sm px-4 py-2 rounded-full shadow-md flex items-center gap-2`}
+      role="status"
+    >
       {children}
+    </div>
+  );
+}
+
+function BannerButton({ onClick, children }: { onClick: () => void; children: ReactNode }) {
+  return (
+    <button className="btn-ghost text-xs !text-white hover:!bg-white/15" onClick={onClick}>
+      {children}
+    </button>
+  );
+}
+
+/** "Deleted X — Undo", shown briefly after any furniture delete. */
+function UndoToast() {
+  const lastDeleted = usePlanStore(s => s.lastDeleted);
+  const undoDelete = usePlanStore(s => s.undoDelete);
+  const dismissUndo = usePlanStore(s => s.dismissUndo);
+
+  useEffect(() => {
+    if (!lastDeleted) return;
+    const t = setTimeout(dismissUndo, UNDO_TOAST_MS);
+    return () => clearTimeout(t);
+  }, [lastDeleted, dismissUndo]);
+
+  if (!lastDeleted) return null;
+  return (
+    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 panel shadow-md px-4 py-2 text-sm flex items-center gap-3" role="status">
+      <span>
+        Deleted <span className="font-medium">{lastDeleted.item.name}</span>
+      </span>
+      <button className="btn-ghost text-xs !text-em font-semibold" onClick={undoDelete}>
+        Undo (Ctrl+Z)
+      </button>
     </div>
   );
 }

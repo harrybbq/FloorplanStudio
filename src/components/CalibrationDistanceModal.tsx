@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import type { UnitSystem } from '../types';
 import { lengthPlaceholder, parseLength } from '../lib/units';
+import { Modal } from './Modal';
+import { TextField } from './FormFields';
 
 export function CalibrationDistanceModal({
   units,
@@ -9,52 +11,42 @@ export function CalibrationDistanceModal({
 }: {
   units: UnitSystem;
   onCancel: () => void;
-  onCommit: (mm: number) => void;
+  onCommit: (mm: number) => boolean;
 }) {
   const [value, setValue] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
 
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
-
-  function submit() {
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
     const mm = parseLength(value, units);
-    if (mm === null || mm <= 0) {
-      setError("Couldn't read that distance. Try e.g. 1500 or 1.5m.");
-      return;
-    }
-    onCommit(mm);
+    if (mm === null || mm <= 0) return setError(`Couldn't read that distance. Try ${lengthPlaceholder(units)}.`);
+    if (!onCommit(mm)) setError('Those two points are too close together — cancel and pick them again.');
   }
 
   return (
-    <div className="absolute inset-0 bg-ink/30 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="panel w-[360px] p-5 shadow-lg">
-        <h2 className="font-display text-lg mb-1">Set scale</h2>
-        <p className="text-sm text-ink-mid mb-4">
-          What's the real distance between those two points?
-        </p>
-        <input
-          ref={inputRef}
-          className="input"
-          placeholder={lengthPlaceholder(units)}
+    <Modal title="Set scale" onClose={onCancel} width={360}>
+      <form onSubmit={submit} className="p-5 pt-2 space-y-3">
+        <p className="text-sm text-ink-mid">What's the real distance between those two points?</p>
+        <TextField
+          label="Distance"
           value={value}
-          onChange={e => {
-            setValue(e.target.value);
+          onChange={v => {
+            setValue(v);
             setError(null);
           }}
-          onKeyDown={e => {
-            if (e.key === 'Enter') submit();
-            if (e.key === 'Escape') onCancel();
-          }}
+          placeholder={lengthPlaceholder(units)}
+          autoFocus
         />
-        {error && <p className="text-xs text-amber mt-2">{error}</p>}
-        <div className="flex justify-end gap-2 mt-4">
-          <button className="btn" onClick={onCancel}>Cancel</button>
-          <button className="btn-primary" onClick={submit}>Set scale</button>
+        {error && <p className="text-xs text-amber">{error}</p>}
+        <div className="flex justify-end gap-2 pt-1">
+          <button type="button" className="btn" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="submit" className="btn-primary">
+            Set scale
+          </button>
         </div>
-      </div>
-    </div>
+      </form>
+    </Modal>
   );
 }

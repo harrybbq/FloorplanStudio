@@ -1,30 +1,42 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { FurnitureDimensions, FurniturePreset, FurnitureShape, LShapeCorner, PlacingTemplate, SavedFurniture, UnitSystem } from '../types';
+import type {
+  FurnitureDimensions,
+  FurniturePreset,
+  FurnitureShape,
+  LShapeCorner,
+  PlacingTemplate,
+  SavedFurniture,
+  UnitSystem,
+} from '../types';
 import { formatLength, lengthPlaceholder, parseLength } from '../lib/units';
 import { FURNITURE_PRESETS, PRESET_CATEGORIES } from '../lib/presets';
 import { defaultRegistry } from '../lib/furniture/providers';
 import { usePlanStore } from '../state/planStore';
 import { ConfirmDimensionsModal } from './ConfirmDimensionsModal';
 import { MakerTab } from './MakerTab';
+import { Modal } from './Modal';
+import { Segmented } from './Segmented';
+import { DimensionFields, EMPTY_DIMENSIONS, parseDimensions, SaveToLibraryCheckbox, TextField, type ManualItem } from './FormFields';
 
 type Tab = 'custom' | 'presets' | 'maker' | 'lookup' | 'library';
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'custom', label: 'Custom' },
+  { id: 'presets', label: 'Presets' },
+  { id: 'maker', label: 'Maker' },
+  { id: 'lookup', label: 'Lookup' },
+  { id: 'library', label: 'Library' },
+];
 
 /**
- * Unified "add furniture" surface. Three sources, one placement flow:
- *   - Custom:  type name + dimensions (optionally save to library)
- *   - Presets: pick from the built-in standard-size catalog
- *   - Library: re-place something saved earlier
+ * One "add furniture" surface, five sources, one placement flow:
+ *   Custom (type dimensions) · Presets (standard sizes) · Maker (draw a shape) ·
+ *   Lookup (product catalog → confirm step) · Library (re-use a saved piece)
  *
  * Picking an item calls beginPlacing() and closes — the user then clicks the
- * canvas to drop it. All measurements stay in mm internally.
+ * canvas to drop it. Tabs stay mounted so a half-filled form or half-drawn
+ * shape survives switching tabs.
  */
-export function AddFurnitureModal({
-  units,
-  onClose,
-}: {
-  units: UnitSystem;
-  onClose: () => void;
-}) {
+export function AddFurnitureModal({ units, onClose }: { units: UnitSystem; onClose: () => void }) {
   const [tab, setTab] = useState<Tab>('custom');
   const [confirming, setConfirming] = useState<FurnitureDimensions | null>(null);
   const [prefillName, setPrefillName] = useState('');
@@ -32,71 +44,69 @@ export function AddFurnitureModal({
   const beginPlacing = usePlanStore(s => s.beginPlacing);
   const addToLibrary = usePlanStore(s => s.addToLibrary);
   const removeFromLibrary = usePlanStore(s => s.removeFromLibrary);
+  const panels = useRef<Partial<Record<Tab, HTMLDivElement | null>>>({});
+
+  // Move focus into the newly shown tab.
+  useEffect(() => {
+    panels.current[tab]?.querySelector<HTMLElement>('input, button')?.focus();
+  }, [tab]);
 
   function place(template: PlacingTemplate) {
     beginPlacing(template);
     onClose();
   }
 
+  const saveManual = (item: ManualItem) => addToLibrary({ ...item, source: 'manual', confidence: 'user-entered' });
+
   return (
-    <div className="absolute inset-0 bg-ink/30 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="panel w-[460px] max-h-[80vh] flex flex-col shadow-lg">
-        <div className="p-5 pb-0">
-          <h2 className="font-display text-lg mb-3">Add furniture</h2>
-          <div className="flex gap-1 border-b border-line">
-            {(['custom', 'presets', 'maker', 'lookup', 'library'] as Tab[]).map(t => (
-              <button
-                key={t}
-                className={`px-3 py-2 text-sm font-medium capitalize -mb-px border-b-2 transition-colors ${
-                  tab === t
-                    ? 'border-em text-em'
-                    : 'border-transparent text-ink-muted hover:text-ink-mid'
-                }`}
-                onClick={() => setTab(t)}
-              >
-                {t}
-                {t === 'library' && library.length > 0 && (
-                  <span className="ml-1 text-xs text-ink-muted">({library.length})</span>
-                )}
-              </button>
-            ))}
-          </div>
+    <>
+      <Modal title="Add furniture" onClose={onClose} width={480}>
+        <div role="tablist" aria-label="Furniture source" className="flex gap-1 border-b border-line px-5 mt-3">
+          {TABS.map(t => (
+            <button
+              key={t.id}
+              role="tab"
+              id={`tab-${t.id}`}
+              aria-selected={tab === t.id}
+              aria-controls={`panel-${t.id}`}
+              className={`px-3 py-2 text-sm font-medium -mb-px border-b-2 transition-colors ${
+                tab === t.id ? 'border-em text-em' : 'border-transparent text-ink-muted hover:text-ink-mid'
+              }`}
+              onClick={() => setTab(t.id)}
+            >
+              {t.label}
+              {t.id === 'library' && library.length > 0 && <span className="ml-1 text-xs text-ink-muted">({library.length})</span>}
+            </button>
+          ))}
         </div>
 
         <div className="p-5 overflow-y-auto">
-          {tab === 'custom' && (
-            <CustomTab
-              units={units}
-              initialName={prefillName}
-              onPlace={place}
-              onSaveToLibrary={item => addToLibrary({ ...item, source: 'manual', confidence: 'user-entered' })}
-            />
-          )}
-          {tab === 'presets' && <PresetsTab units={units} onPlace={place} onSaveToLibrary={addToLibrary} />}
-          {tab === 'maker' && (
-            <MakerTab
-              units={units}
-              onPlace={place}
-              onSaveToLibrary={item => addToLibrary({ ...item, source: 'manual', confidence: 'user-entered' })}
-            />
-          )}
-          {tab === 'lookup' && (
-            <LookupTab
-              onResult={setConfirming}
-              onManual={q => {
-                setPrefillName(q);
-                setTab('custom');
+          {TABS.map(t => (
+            <div
+              key={t.id}
+              ref={el => {
+                panels.current[t.id] = el;
               }}
-            />
-          )}
-          {tab === 'library' && (
-            <LibraryTab
-              units={units}
-              library={library}
-              onPlace={place}
-              onRemove={removeFromLibrary}
-            />
-          )}
+              id={`panel-${t.id}`}
+              role="tabpanel"
+              aria-labelledby={`tab-${t.id}`}
+              hidden={tab !== t.id}
+            >
+              {t.id === 'custom' && <CustomTab units={units} initialName={prefillName} onPlace={place} onSaveToLibrary={saveManual} />}
+              {t.id === 'presets' && <PresetsTab units={units} onPlace={place} onSaveToLibrary={addToLibrary} />}
+              {t.id === 'maker' && <MakerTab units={units} onPlace={place} onSaveToLibrary={saveManual} />}
+              {t.id === 'lookup' && (
+                <LookupTab
+                  onResult={setConfirming}
+                  onManual={q => {
+                    setPrefillName(q);
+                    setTab('custom');
+                  }}
+                />
+              )}
+              {t.id === 'library' && <LibraryTab units={units} library={library} onPlace={place} onRemove={removeFromLibrary} />}
+            </div>
+          ))}
         </div>
 
         <div className="p-4 border-t border-line flex justify-end">
@@ -104,17 +114,12 @@ export function AddFurnitureModal({
             Close
           </button>
         </div>
-      </div>
+      </Modal>
 
       {confirming && (
-        <ConfirmDimensionsModal
-          result={confirming}
-          units={units}
-          onCancel={() => setConfirming(null)}
-          onConfirm={template => place(template)}
-        />
+        <ConfirmDimensionsModal result={confirming} units={units} onCancel={() => setConfirming(null)} onConfirm={place} />
       )}
-    </div>
+    </>
   );
 }
 
@@ -122,132 +127,99 @@ export function AddFurnitureModal({
 
 function CustomTab({
   units,
-  initialName = '',
+  initialName,
   onPlace,
   onSaveToLibrary,
 }: {
   units: UnitSystem;
-  initialName?: string;
+  initialName: string;
   onPlace: (t: PlacingTemplate) => void;
-  onSaveToLibrary: (item: { name: string; widthMm: number; depthMm: number; heightMm: number; shape?: FurnitureShape }) => void;
+  onSaveToLibrary: (item: ManualItem) => void;
 }) {
   const [name, setName] = useState(initialName);
-  const [width, setWidth] = useState('');
-  const [depth, setDepth] = useState('');
-  const [height, setHeight] = useState('');
+  const [dims, setDims] = useState(EMPTY_DIMENSIONS);
   const [shapeKind, setShapeKind] = useState<'rect' | 'lshape'>('rect');
   const [cutCorner, setCutCorner] = useState<LShapeCorner>('tr');
   const [arm, setArm] = useState('');
   const [saveToLib, setSaveToLib] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const nameRef = useRef<HTMLInputElement | null>(null);
 
+  // "Enter manually" from the Lookup tab hands its query over as the name.
   useEffect(() => {
-    nameRef.current?.focus();
-  }, []);
+    if (initialName) setName(initialName);
+  }, [initialName]);
 
-  function submit() {
-    const w = parseLength(width, units);
-    const d = parseLength(depth, units);
-    const h = height ? parseLength(height, units) : 0;
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
     if (!name.trim()) return setError('Give it a name.');
-    if (w === null || w <= 0) return setError('Width is required (e.g. 1500 or 1.5m).');
-    if (d === null || d <= 0) return setError('Depth is required.');
-    if (h === null) return setError("Couldn't read the height.");
+    const parsed = parseDimensions(dims, units);
+    if (!parsed.ok) return setError(parsed.error);
+    const { widthMm, depthMm } = parsed.value;
 
     let shape: FurnitureShape | undefined;
     if (shapeKind === 'lshape') {
       const a = parseLength(arm, units);
       if (a === null || a <= 0) return setError('Enter the L arm thickness.');
-      if (a >= Math.min(w, d)) return setError('Arm thickness must be less than both width and depth.');
+      if (a >= Math.min(widthMm, depthMm)) return setError('Arm thickness must be less than both width and depth.');
       shape = { kind: 'lshape', cutCorner, armThicknessMm: a };
     }
 
-    const data = { name: name.trim(), widthMm: w, depthMm: d, heightMm: h, shape };
-    if (saveToLib) onSaveToLibrary(data);
-    onPlace(data);
+    const item: ManualItem = { name: name.trim(), ...parsed.value, shape };
+    if (saveToLib) onSaveToLibrary(item);
+    onPlace(item);
   }
 
   return (
-    <div className="space-y-3">
+    <form onSubmit={submit} className="space-y-3">
       <p className="text-sm text-ink-mid">Manual entry. After confirming, click on the plan to place it.</p>
-      <div>
-        <label className="label block mb-1">Name</label>
-        <input
-          ref={nameRef}
-          className="input"
-          placeholder="e.g. Malm dresser"
-          value={name}
-          onChange={e => setName(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && submit()}
-        />
-      </div>
-      <div className="grid grid-cols-3 gap-2">
-        <div>
-          <label className="label block mb-1">Width</label>
-          <input className="input" placeholder={lengthPlaceholder(units)} value={width} onChange={e => setWidth(e.target.value)} />
-        </div>
-        <div>
-          <label className="label block mb-1">Depth</label>
-          <input className="input" placeholder={lengthPlaceholder(units)} value={depth} onChange={e => setDepth(e.target.value)} />
-        </div>
-        <div>
-          <label className="label block mb-1">Height</label>
-          <input className="input" placeholder="optional" value={height} onChange={e => setHeight(e.target.value)} />
-        </div>
-      </div>
+      <TextField label="Name" value={name} onChange={setName} placeholder="e.g. Malm dresser" />
+      <DimensionFields units={units} value={dims} onChange={setDims} />
 
       <div>
-        <label className="label block mb-1">Shape</label>
-        <div className="flex gap-1">
-          {(['rect', 'lshape'] as const).map(k => (
-            <button
-              key={k}
-              type="button"
-              className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
-                shapeKind === k ? 'bg-em text-white border-em' : 'border-line text-ink-mid hover:bg-bg-overlay'
-              }`}
-              onClick={() => setShapeKind(k)}
-            >
-              {k === 'rect' ? 'Rectangle' : 'L-shape'}
-            </button>
-          ))}
-        </div>
+        <span className="label block mb-1">Shape</span>
+        <Segmented
+          label="Shape"
+          value={shapeKind}
+          onChange={setShapeKind}
+          options={[
+            { value: 'rect', label: 'Rectangle' },
+            { value: 'lshape', label: 'L-shape' },
+          ]}
+        />
       </div>
 
       {shapeKind === 'lshape' && (
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className="label block mb-1">Cut corner</label>
-            <select className="input" value={cutCorner} onChange={e => setCutCorner(e.target.value as LShapeCorner)}>
+            <label htmlFor="custom-cut" className="label block mb-1">
+              Cut corner
+            </label>
+            <select id="custom-cut" className="input" value={cutCorner} onChange={e => setCutCorner(e.target.value as LShapeCorner)}>
               <option value="tr">Top-right</option>
               <option value="tl">Top-left</option>
               <option value="br">Bottom-right</option>
               <option value="bl">Bottom-left</option>
             </select>
           </div>
-          <div>
-            <label className="label block mb-1">Arm thickness</label>
-            <input className="input" placeholder={lengthPlaceholder(units)} value={arm} onChange={e => setArm(e.target.value)} />
-          </div>
+          <TextField label="Arm thickness" value={arm} onChange={setArm} placeholder={lengthPlaceholder(units)} />
         </div>
       )}
 
       {error && <p className="text-xs text-amber">{error}</p>}
-      <label className="flex items-center gap-2 text-sm text-ink-mid cursor-pointer select-none">
-        <input type="checkbox" checked={saveToLib} onChange={e => setSaveToLib(e.target.checked)} />
-        Save to library for reuse
-      </label>
+      <SaveToLibraryCheckbox checked={saveToLib} onChange={setSaveToLib} />
       <div className="flex justify-end">
-        <button className="btn-primary" onClick={submit}>
+        <button type="submit" className="btn-primary">
           Add &amp; place
         </button>
       </div>
-    </div>
+    </form>
   );
 }
 
 /* ── Presets ─────────────────────────────────────────────────────────── */
+
+/** Built-in presets are standard sizes, so they place as verified catalog items. */
+const asPreset = (p: FurniturePreset): PlacingTemplate => ({ ...p, source: 'catalog', confidence: 'verified' });
 
 function PresetsTab({
   units,
@@ -258,34 +230,26 @@ function PresetsTab({
   onPlace: (t: PlacingTemplate) => void;
   onSaveToLibrary: (item: Omit<SavedFurniture, 'id'>) => void;
 }) {
-  const [category, setCategory] = useState<string>('All');
+  const [category, setCategory] = useState('All');
   const [query, setQuery] = useState('');
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return FURNITURE_PRESETS.filter(p => {
-      if (category !== 'All' && p.category !== category) return false;
-      if (q && !p.name.toLowerCase().includes(q)) return false;
-      return true;
-    });
+    return FURNITURE_PRESETS.filter(
+      p => (category === 'All' || p.category === category) && (!q || p.name.toLowerCase().includes(q))
+    );
   }, [category, query]);
 
   return (
     <div className="space-y-3">
-      <input
-        className="input"
-        placeholder="Search presets…"
-        value={query}
-        onChange={e => setQuery(e.target.value)}
-      />
-      <div className="flex flex-wrap gap-1">
+      <input className="input" aria-label="Search presets" placeholder="Search presets…" value={query} onChange={e => setQuery(e.target.value)} />
+      <div className="flex flex-wrap gap-1" role="group" aria-label="Category">
         {['All', ...PRESET_CATEGORIES].map(c => (
           <button
             key={c}
+            aria-pressed={category === c}
             className={`px-2 py-0.5 text-xs rounded-full border transition-colors ${
-              category === c
-                ? 'bg-em text-white border-em'
-                : 'border-line text-ink-mid hover:bg-bg-overlay'
+              category === c ? 'bg-em text-white border-em' : 'border-line text-ink-mid hover:bg-bg-overlay'
             }`}
             onClick={() => setCategory(c)}
           >
@@ -295,7 +259,17 @@ function PresetsTab({
       </div>
       <ul className="space-y-1 max-h-[42vh] overflow-y-auto">
         {filtered.map(preset => (
-          <PresetRow key={`${preset.category}-${preset.name}`} preset={preset} units={units} onPlace={onPlace} onSaveToLibrary={onSaveToLibrary} />
+          <ItemRow
+            key={`${preset.category}-${preset.name}`}
+            name={preset.name}
+            detail={`${formatLength(preset.widthMm, units)} × ${formatLength(preset.depthMm, units)}`}
+            onPlace={() => onPlace(asPreset(preset))}
+            secondary={{
+              label: '+ lib',
+              title: `Save ${preset.name} to library`,
+              onClick: () => onSaveToLibrary({ ...preset, source: 'catalog', confidence: 'verified' }),
+            }}
+          />
         ))}
         {filtered.length === 0 && <li className="text-sm text-ink-muted italic py-2">No presets match.</li>}
       </ul>
@@ -303,33 +277,38 @@ function PresetsTab({
   );
 }
 
-function PresetRow({
-  preset,
-  units,
+/** A list row with a main "place" action and an optional hover action. */
+function ItemRow({
+  name,
+  detail,
+  swatch,
   onPlace,
-  onSaveToLibrary,
+  secondary,
 }: {
-  preset: FurniturePreset;
-  units: UnitSystem;
-  onPlace: (t: PlacingTemplate) => void;
-  onSaveToLibrary: (item: Omit<SavedFurniture, 'id'>) => void;
+  name: string;
+  detail: string;
+  swatch?: string;
+  onPlace: () => void;
+  secondary?: { label: string; title: string; onClick: () => void; danger?: boolean };
 }) {
   return (
     <li className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-bg-overlay group">
-      <button className="flex-1 text-left" onClick={() => onPlace({ ...preset, confidence: 'verified' })}>
-        <div className="text-sm font-medium">{preset.name}</div>
-        <div className="text-xs text-ink-muted">
-          {formatLength(preset.widthMm, units)} × {formatLength(preset.depthMm, units)}
-        </div>
+      {swatch && <span className="w-3 h-3 rounded-sm flex-shrink-0" style={{ background: swatch }} />}
+      <button className="flex-1 text-left" onClick={onPlace}>
+        <div className="text-sm font-medium">{name}</div>
+        <div className="text-xs text-ink-muted">{detail}</div>
       </button>
-      <button
-        className="btn-ghost text-xs opacity-0 group-hover:opacity-100"
-        title="Save to library"
-        onClick={() => onSaveToLibrary({ ...preset, source: 'manual', confidence: 'verified' })}
-      >
-        + lib
-      </button>
-      <button className="btn-primary !px-2 !py-1 text-xs" onClick={() => onPlace({ ...preset, confidence: 'verified' })}>
+      {secondary && (
+        <button
+          className={`btn-ghost text-xs reveal-on-hover ${secondary.danger ? '!text-amber' : ''}`}
+          title={secondary.title}
+          aria-label={secondary.title}
+          onClick={secondary.onClick}
+        >
+          {secondary.label}
+        </button>
+      )}
+      <button className="btn-primary !px-2 !py-1 text-xs" onClick={onPlace} aria-label={`Place ${name}`}>
         Place
       </button>
     </li>
@@ -348,54 +327,45 @@ function LookupTab({
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [noMatch, setNoMatch] = useState(false);
-  const inputRef = useRef<HTMLInputElement | null>(null);
 
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
-
-  async function search() {
+  async function search(e: React.FormEvent) {
+    e.preventDefault();
     const q = query.trim();
-    if (!q) return;
+    if (!q || loading) return;
     setLoading(true);
     setNoMatch(false);
-    const result = await defaultRegistry.lookup(q);
-    setLoading(false);
-    if (result) onResult(result);
-    else setNoMatch(true);
+    try {
+      const result = await defaultRegistry.lookup(q);
+      if (result) onResult(result);
+      else setNoMatch(true);
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
     <div className="space-y-3">
-      <p className="text-sm text-ink-mid">
-        Type a product name to look up its dimensions. A match opens a confirm step before placing.
-      </p>
-      <div className="flex gap-2">
+      <p className="text-sm text-ink-mid">Type a product name to look up its dimensions. A match opens a confirm step before placing.</p>
+      <form onSubmit={search} className="flex gap-2">
         <input
-          ref={inputRef}
           className="input"
+          aria-label="Product name"
           placeholder="e.g. IKEA Billy bookcase"
           value={query}
           onChange={e => {
             setQuery(e.target.value);
             setNoMatch(false);
           }}
-          onKeyDown={e => e.key === 'Enter' && search()}
         />
-        <button
-          className="btn-primary whitespace-nowrap"
-          onClick={search}
-          disabled={loading || !query.trim()}
-        >
+        <button type="submit" className="btn-primary whitespace-nowrap" disabled={loading || !query.trim()}>
           {loading ? 'Searching…' : 'Search'}
         </button>
-      </div>
+      </form>
 
-      {noMatch && !loading && (
-        <div className="rounded-md border border-line bg-bg-overlay/50 p-3 text-sm">
+      {noMatch && (
+        <div className="rounded-md border border-line bg-bg-overlay/50 p-3 text-sm" role="status">
           <p className="text-ink-mid mb-2">
-            No automatic match for “{query.trim()}”. Online lookup (AI / web) isn’t enabled in this
-            build — you can enter the dimensions yourself.
+            No match for “{query.trim()}” in the built-in catalog. You can enter the dimensions yourself.
           </p>
           <button className="btn" onClick={() => onManual(query.trim())}>
             Enter manually
@@ -404,9 +374,8 @@ function LookupTab({
       )}
 
       <p className="text-xs text-ink-muted">
-        Built-in catalog (~40 items) across IKEA, B&amp;Q and Tesco — e.g. Billy, Kallax, Malm, Pax,
-        Ektorp, Poäng, Form Darwin, GoodHome, Fox &amp; Ivy wardrobe, Tesco sofa. Dimensions are
-        approximate — confirm before placing. Unlimited lookup (AI / web) drops in with a backend.
+        Built-in catalog of common IKEA, B&amp;Q and Tesco pieces — e.g. Billy, Kallax, Malm, Pax, Ektorp, Poäng,
+        Form Darwin, GoodHome, Fox &amp; Ivy wardrobe, Tesco sofa. Dimensions are approximate — confirm before placing.
       </p>
     </div>
   );
@@ -435,31 +404,14 @@ function LibraryTab({
   return (
     <ul className="space-y-1 max-h-[52vh] overflow-y-auto">
       {library.map(item => (
-        <li key={item.id} className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-bg-overlay group">
-          <span className="w-3 h-3 rounded-sm flex-shrink-0" style={{ background: item.color ?? '#8b7355' }} />
-          <button
-            className="flex-1 text-left"
-            onClick={() => onPlace({ ...item, source: item.source, confidence: item.confidence })}
-          >
-            <div className="text-sm font-medium">{item.name}</div>
-            <div className="text-xs text-ink-muted">
-              {formatLength(item.widthMm, units)} × {formatLength(item.depthMm, units)}
-            </div>
-          </button>
-          <button
-            className="btn-ghost text-xs opacity-0 group-hover:opacity-100 !text-amber"
-            title="Remove from library"
-            onClick={() => onRemove(item.id)}
-          >
-            ✕
-          </button>
-          <button
-            className="btn-primary !px-2 !py-1 text-xs"
-            onClick={() => onPlace({ ...item, source: item.source, confidence: item.confidence })}
-          >
-            Place
-          </button>
-        </li>
+        <ItemRow
+          key={item.id}
+          name={item.name}
+          detail={`${formatLength(item.widthMm, units)} × ${formatLength(item.depthMm, units)}`}
+          swatch={item.color ?? '#8b7355'}
+          onPlace={() => onPlace(item)}
+          secondary={{ label: '✕', title: `Remove ${item.name} from library`, onClick: () => onRemove(item.id), danger: true }}
+        />
       ))}
     </ul>
   );

@@ -71,12 +71,9 @@ export type Plan = {
   name: string;
   /** Base64 data URL of the underlying floorplan image. */
   imageDataUrl: string | null;
-  /** Natural image dimensions (so we can lay it out on the stage). */
-  imageWidth: number;
-  imageHeight: number;
   calibration: Calibration | null;
   furniture: FurnitureItem[];
-  /** Traced walls used for overlap detection. Optional for backward-compat. */
+  /** Traced walls used for overlap detection (older saves are migrated on load). */
   walls: Wall[];
   createdAt: number;
   updatedAt: number;

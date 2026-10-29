@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Stage, Layer, Image as KonvaImage, Rect, Group, Text, Line, Circle } from 'react-konva';
+import { Stage, Layer, Image as KonvaImage, Group, Text, Line, Circle } from 'react-konva';
 import type Konva from 'konva';
-import { usePlanStore, commitCalibrationWithPoints } from '../state/planStore';
+import { usePlanStore } from '../state/planStore';
 import { useOverlaps } from '../state/useOverlaps';
 import { formatLength } from '../lib/units';
 import { localOutline, badgeAnchor } from '../lib/footprint';
@@ -10,13 +10,21 @@ import { CalibrationDistanceModal } from './CalibrationDistanceModal';
 
 const OVERLAP_RED = '#e02424';
 const WALL_COLOR = '#3a3530';
+const MIN_SCALE = 0.05;
+const MAX_SCALE = 8;
+/** A drag shorter than this (screen px) is still a click. */
+const PAN_CLICK_SLOP = 3;
+/** Points closer than this on screen count as the same point. */
+const SAME_POINT_SCREEN_PX = 4;
+const DOUBLE_CLICK_MS = 400;
+
+type View = { scale: number; x: number; y: number };
 
 /**
  * The drawing surface. Owns:
- *   - Image loading + auto-fit
- *   - Pan/zoom (wheel zoom, middle/right drag pan)
- *   - Calibration click handling
- *   - Furniture placement on click (when mode === 'placing')
+ *   - Image loading + fit-to-screen
+ *   - Pan (middle-drag, or Alt+drag on empty space) and wheel zoom
+ *   - Click handling for calibration, wall tracing and furniture placement
  *   - Furniture selection + drag
  *
  * All real-world coords are stored in IMAGE pixel-space. Stage scale/offset
@@ -30,232 +38,181 @@ export function FloorplanCanvas() {
   const mode = usePlanStore(s => s.mode);
   const units = usePlanStore(s => s.units);
   const pendingPoint = usePlanStore(s => s.pendingCalibrationPoint);
+  const pendingSecond = usePlanStore(s => s.pendingCalibrationSecond);
   const selectedId = usePlanStore(s => s.selectedFurnitureId);
   const placingTemplate = usePlanStore(s => s.placingTemplate);
-  const imageEl = usePlanStore(s => s.imageElement);
-
   const draftWallPoints = usePlanStore(s => s.draftWallPoints);
 
   const addCalibrationPoint = usePlanStore(s => s.addCalibrationPoint);
+  const commitCalibration = usePlanStore(s => s.commitCalibration);
   const cancelPendingCalibration = usePlanStore(s => s.cancelPendingCalibration);
   const placeFurnitureAt = usePlanStore(s => s.placeFurnitureAt);
   const selectFurniture = usePlanStore(s => s.selectFurniture);
   const updateFurniture = usePlanStore(s => s.updateFurniture);
-  const setImageElement = usePlanStore(s => s.setImageElement);
   const addWallPoint = usePlanStore(s => s.addWallPoint);
   const finishWall = usePlanStore(s => s.finishWall);
-  const cancelWall = usePlanStore(s => s.cancelWall);
 
   const overlapping = useOverlaps();
+  const imageEl = useImage(plan?.imageDataUrl ?? null);
 
   // — container size —
-  const [size, setSize] = useState({ w: 800, h: 600 });
+  const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   useEffect(() => {
     if (!containerRef.current) return;
-    const ro = new ResizeObserver(entries => {
-      for (const e of entries) {
-        const { width, height } = e.contentRect;
-        setSize({ w: Math.floor(width), h: Math.floor(height) });
-      }
+    const ro = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      setSize({ w: Math.floor(width), h: Math.floor(height) });
     });
     ro.observe(containerRef.current);
     return () => ro.disconnect();
   }, []);
 
-  // — stage view transform (zoom + pan) —
-  const [view, setView] = useState({ scale: 1, x: 0, y: 0 });
+  // — view transform —
+  const [view, setView] = useState<View>({ scale: 1, x: 0, y: 0 });
 
-  // — load image when plan.imageDataUrl changes —
-  useEffect(() => {
-    if (!plan?.imageDataUrl) {
-      setImageElement(null);
-      return;
-    }
-    const img = new window.Image();
-    img.onload = () => setImageElement(img);
-    img.src = plan.imageDataUrl;
-  }, [plan?.id, plan?.imageDataUrl, setImageElement]);
-
-  // — auto-fit when image or container size changes —
-  useEffect(() => {
-    if (!imageEl || !plan) return;
+  function fitView() {
+    if (!imageEl || !size) return;
     const padding = 40;
-    const sx = (size.w - padding * 2) / imageEl.naturalWidth;
-    const sy = (size.h - padding * 2) / imageEl.naturalHeight;
-    const scale = Math.min(sx, sy, 1);
+    const scale = Math.min(
+      (size.w - padding * 2) / imageEl.naturalWidth,
+      (size.h - padding * 2) / imageEl.naturalHeight,
+      1
+    );
     setView({
       scale,
       x: (size.w - imageEl.naturalWidth * scale) / 2,
       y: (size.h - imageEl.naturalHeight * scale) / 2,
     });
-  }, [imageEl, plan?.id, size.w, size.h]);
-
-  // — pending second point for calibration (preview) —
-  const [pendingSecond, setPendingSecond] = useState<Point | null>(null);
-  const [calibrationDialogOpen, setCalibrationDialogOpen] = useState(false);
-
-  // Convert a screen-space pointer position to image-space.
-  function getImagePoint(): Point | null {
-    const stage = stageRef.current;
-    if (!stage) return null;
-    const pos = stage.getPointerPosition();
-    if (!pos) return null;
-    return {
-      x: (pos.x - view.x) / view.scale,
-      y: (pos.y - view.y) / view.scale,
-    };
   }
 
+  // Fit once per image (not on every resize, so the user's zoom/pan survives).
+  const fittedFor = useRef<HTMLImageElement | null>(null);
+  useEffect(() => {
+    if (imageEl && size && fittedFor.current !== imageEl) {
+      fittedFor.current = imageEl;
+      fitView();
+    }
+  }, [imageEl, size]); // fitView only reads these two
+
+  function zoomAt(factor: number, anchor: Point) {
+    setView(v => {
+      const scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, v.scale * factor));
+      const k = scale / v.scale;
+      return { scale, x: anchor.x - (anchor.x - v.x) * k, y: anchor.y - (anchor.y - v.y) * k };
+    });
+  }
+
+  /** Pointer position in image space. */
+  function imagePoint(): Point | null {
+    return stageRef.current?.getRelativePointerPosition() ?? null;
+  }
+
+  const samePointPx = SAME_POINT_SCREEN_PX / view.scale;
+
+  // — pan —
+  const pan = useRef({ active: false, lastX: 0, lastY: 0, travelled: 0 });
+  const [panning, setPanning] = useState(false);
+
+  function handleMouseDown(e: Konva.KonvaEventObject<MouseEvent>) {
+    pan.current.travelled = 0;
+    const onEmpty = e.target === e.target.getStage();
+    if (e.evt.button === 1 || (e.evt.button === 0 && e.evt.altKey && onEmpty)) {
+      e.evt.preventDefault();
+      pan.current = { active: true, lastX: e.evt.clientX, lastY: e.evt.clientY, travelled: 0 };
+      setPanning(true);
+    }
+  }
+
+  function endPan() {
+    pan.current.active = false;
+    setPanning(false);
+  }
+
+  // Only the tools that draw a preview need the live cursor position.
+  const tracksHover = mode === 'placing' || mode === 'wall' || (mode === 'calibrate' && !!pendingPoint && !pendingSecond);
+  const [hoverPoint, setHoverPoint] = useState<Point | null>(null);
+
+  function handleMouseMove(e: Konva.KonvaEventObject<MouseEvent>) {
+    if (pan.current.active) {
+      const dx = e.evt.clientX - pan.current.lastX;
+      const dy = e.evt.clientY - pan.current.lastY;
+      pan.current.lastX = e.evt.clientX;
+      pan.current.lastY = e.evt.clientY;
+      pan.current.travelled += Math.abs(dx) + Math.abs(dy);
+      setView(v => ({ ...v, x: v.x + dx, y: v.y + dy }));
+      return;
+    }
+    if (tracksHover) setHoverPoint(imagePoint());
+  }
+
+  // Our own double-click detection. Konva's `dblclick` counts any two releases —
+  // e.g. a middle-button pan followed by a quick click — which would end a wall early.
+  const lastClick = useRef({ at: 0, x: 0, y: 0 });
+
+  // Konva fires `click` for every button on release, including at the end of a pan.
   function handleStageClick(e: Konva.KonvaEventObject<MouseEvent>) {
-    if (!plan) return;
-    // ignore clicks that hit furniture (those bubble up but the furniture group handles them)
-    const clickedEmpty = e.target === e.target.getStage() || e.target.name() === 'background';
-    const pt = getImagePoint();
+    if (!plan || e.evt.button !== 0 || e.evt.altKey || pan.current.travelled > PAN_CLICK_SLOP) return;
+    const pt = imagePoint();
     if (!pt) return;
 
+    const prev = lastClick.current;
+    const isDouble =
+      e.evt.timeStamp - prev.at < DOUBLE_CLICK_MS && Math.hypot(e.evt.clientX - prev.x, e.evt.clientY - prev.y) <= SAME_POINT_SCREEN_PX;
+    lastClick.current = { at: isDouble ? 0 : e.evt.timeStamp, x: e.evt.clientX, y: e.evt.clientY };
+
     if (mode === 'calibrate') {
-      if (!pendingPoint) {
-        addCalibrationPoint(pt);
-      } else {
-        setPendingSecond(pt);
-        setCalibrationDialogOpen(true);
-      }
-      return;
-    }
-
-    if (mode === 'placing' && placingTemplate) {
+      if (!pendingSecond) addCalibrationPoint(pt, samePointPx);
+    } else if (mode === 'placing') {
       placeFurnitureAt(pt.x, pt.y);
-      return;
-    }
-
-    if (mode === 'wall') {
-      addWallPoint(pt);
-      return;
-    }
-
-    if (mode === 'select' && clickedEmpty) {
+    } else if (mode === 'wall') {
+      if (isDouble) finishWall();
+      else addWallPoint(pt, samePointPx);
+    } else {
+      // Furniture clicks stop propagation, so reaching here means empty space.
       selectFurniture(null);
     }
   }
 
-  function handleStageDblClick() {
-    if (mode === 'wall') finishWall();
-  }
-
-  // Mouse-move ghost for calibration second point + placing preview.
-  const [hoverPoint, setHoverPoint] = useState<Point | null>(null);
-  function handleStageMouseMove() {
-    const pt = getImagePoint();
-    if (pt) setHoverPoint(pt);
-  }
-
-  // Wheel zoom.
   function handleWheel(e: Konva.KonvaEventObject<WheelEvent>) {
     e.evt.preventDefault();
-    const stage = stageRef.current;
-    if (!stage) return;
-    const pointer = stage.getPointerPosition();
-    if (!pointer) return;
-    const oldScale = view.scale;
-    const direction = e.evt.deltaY > 0 ? -1 : 1;
-    const factor = 1.1;
-    const newScale = Math.max(0.05, Math.min(8, oldScale * (direction > 0 ? factor : 1 / factor)));
-    const worldX = (pointer.x - view.x) / oldScale;
-    const worldY = (pointer.y - view.y) / oldScale;
-    setView({
-      scale: newScale,
-      x: pointer.x - worldX * newScale,
-      y: pointer.y - worldY * newScale,
-    });
+    const pointer = stageRef.current?.getPointerPosition();
+    if (pointer) zoomAt(e.evt.deltaY > 0 ? 1 / 1.1 : 1.1, pointer);
   }
-
-  // Pan via middle-mouse drag.
-  const panState = useRef<{ active: boolean; lastX: number; lastY: number }>({
-    active: false,
-    lastX: 0,
-    lastY: 0,
-  });
-  function handleMouseDown(e: Konva.KonvaEventObject<MouseEvent>) {
-    if (e.evt.button === 1 || (e.evt.button === 0 && e.evt.altKey)) {
-      e.evt.preventDefault();
-      panState.current = { active: true, lastX: e.evt.clientX, lastY: e.evt.clientY };
-    }
-  }
-  function handleMouseMove(e: Konva.KonvaEventObject<MouseEvent>) {
-    handleStageMouseMove();
-    if (panState.current.active) {
-      const dx = e.evt.clientX - panState.current.lastX;
-      const dy = e.evt.clientY - panState.current.lastY;
-      panState.current.lastX = e.evt.clientX;
-      panState.current.lastY = e.evt.clientY;
-      setView(v => ({ ...v, x: v.x + dx, y: v.y + dy }));
-    }
-  }
-  function handleMouseUp() {
-    panState.current.active = false;
-  }
-
-  // Escape to cancel pending calibration / placing / wall.
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') {
-        if (mode === 'calibrate') cancelPendingCalibration();
-        if (mode === 'placing') usePlanStore.getState().cancelPlacing();
-        if (mode === 'wall') cancelWall();
-      }
-    }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [mode, cancelPendingCalibration, cancelWall]);
 
   const pxPerMm = plan?.calibration?.pxPerMm ?? null;
 
   if (!plan) return null;
 
+  const stageW = size?.w ?? 800;
+  const stageH = size?.h ?? 600;
+  const center = { x: stageW / 2, y: stageH / 2 };
+  const calibrationEnd = pendingSecond ?? hoverPoint;
+
   return (
     <div ref={containerRef} className="relative w-full h-full overflow-hidden">
       <Stage
         ref={stageRef}
-        width={size.w}
-        height={size.h}
+        width={stageW}
+        height={stageH}
         scaleX={view.scale}
         scaleY={view.scale}
         x={view.x}
         y={view.y}
         onClick={handleStageClick}
-        onDblClick={handleStageDblClick}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
-        onWheel={handleWheel}
-        style={{
-          cursor:
-            mode === 'calibrate' || mode === 'placing' || mode === 'wall'
-              ? 'crosshair'
-              : panState.current.active
-              ? 'grabbing'
-              : 'default',
+        onMouseUp={endPan}
+        onMouseLeave={() => {
+          endPan();
+          setHoverPoint(null);
         }}
+        onWheel={handleWheel}
+        style={{ cursor: panning ? 'grabbing' : mode === 'select' ? 'default' : 'crosshair' }}
       >
         <Layer>
-          {/* background hit-target so empty-space clicks register */}
-          {imageEl && (
-            <Rect
-              name="background"
-              x={0}
-              y={0}
-              width={imageEl.naturalWidth}
-              height={imageEl.naturalHeight}
-              fill="transparent"
-              listening
-            />
-          )}
           {imageEl && (
             <KonvaImage
               image={imageEl}
-              x={0}
-              y={0}
               width={imageEl.naturalWidth}
               height={imageEl.naturalHeight}
               listening={false}
@@ -293,14 +250,7 @@ export function FloorplanCanvas() {
                 listening={false}
               />
               {draftWallPoints.map((p, i) => (
-                <Circle
-                  key={i}
-                  x={p.x}
-                  y={p.y}
-                  radius={4 / view.scale}
-                  fill={WALL_COLOR}
-                  listening={false}
-                />
+                <Circle key={i} x={p.x} y={p.y} radius={4 / view.scale} fill={WALL_COLOR} listening={false} />
               ))}
             </>
           )}
@@ -310,35 +260,36 @@ export function FloorplanCanvas() {
             <CalibrationLine
               p1={plan.calibration.points[0]}
               p2={plan.calibration.points[1]}
-              distanceLabel={formatLength(plan.calibration.distanceMm, units)}
+              label={formatLength(plan.calibration.distanceMm, units)}
               viewScale={view.scale}
             />
           )}
 
-          {/* Pending calibration first point */}
-          {mode === 'calibrate' && pendingPoint && !pendingSecond && (
-            <>
+          {/* Calibration in progress */}
+          {mode === 'calibrate' && pendingPoint && (
+            <Group listening={false}>
               <Circle x={pendingPoint.x} y={pendingPoint.y} radius={6 / view.scale} fill="#d4700a" />
-              {hoverPoint && (
+              {calibrationEnd && (
                 <Line
-                  points={[pendingPoint.x, pendingPoint.y, hoverPoint.x, hoverPoint.y]}
+                  points={[pendingPoint.x, pendingPoint.y, calibrationEnd.x, calibrationEnd.y]}
                   stroke="#d4700a"
                   strokeWidth={2 / view.scale}
                   dash={[8 / view.scale, 6 / view.scale]}
                 />
               )}
-            </>
+              {pendingSecond && <Circle x={pendingSecond.x} y={pendingSecond.y} radius={6 / view.scale} fill="#d4700a" />}
+            </Group>
           )}
 
-          {/* Placing preview (ghost footprint following the cursor) */}
+          {/* Placing preview */}
           {mode === 'placing' && placingTemplate && hoverPoint && pxPerMm && (
-            <PlacingGhost x={hoverPoint.x} y={hoverPoint.y} template={placingTemplate} pxPerMm={pxPerMm} />
+            <PlacingGhost at={hoverPoint} template={placingTemplate} pxPerMm={pxPerMm} viewScale={view.scale} />
           )}
 
           {/* Furniture */}
           {pxPerMm &&
             plan.furniture.map(item => (
-              <FurnitureRect
+              <FurnitureShape
                 key={item.id}
                 item={item}
                 pxPerMm={pxPerMm}
@@ -354,90 +305,98 @@ export function FloorplanCanvas() {
         </Layer>
       </Stage>
 
-      {/* Calibration dialog */}
-      {calibrationDialogOpen && pendingPoint && pendingSecond && (
-        <CalibrationDistanceModal
-          units={units}
-          onCancel={() => {
-            setCalibrationDialogOpen(false);
-            setPendingSecond(null);
-            cancelPendingCalibration();
-          }}
-          onCommit={mm => {
-            commitCalibrationWithPoints(pendingPoint, pendingSecond, mm);
-            setCalibrationDialogOpen(false);
-            setPendingSecond(null);
-          }}
-        />
+      {/* Zoom controls */}
+      <div className="absolute bottom-4 right-4 panel flex items-center text-xs shadow-md" role="group" aria-label="Zoom">
+        <button className="btn-ghost !rounded-r-none" onClick={() => zoomAt(1 / 1.25, center)} aria-label="Zoom out">
+          −
+        </button>
+        <span className="px-1.5 font-mono text-ink-mid tabular-nums w-12 text-center">{Math.round(view.scale * 100)}%</span>
+        <button className="btn-ghost !rounded-none" onClick={() => zoomAt(1.25, center)} aria-label="Zoom in">
+          +
+        </button>
+        <button className="btn-ghost !rounded-l-none border-l border-line" onClick={fitView}>
+          Fit
+        </button>
+      </div>
+
+      {mode === 'calibrate' && pendingPoint && pendingSecond && (
+        <CalibrationDistanceModal units={units} onCancel={cancelPendingCalibration} onCommit={commitCalibration} />
       )}
     </div>
   );
 }
 
+/** Decode a data URL into an <img> for Konva, ignoring results for a superseded src. */
+function useImage(src: string | null): HTMLImageElement | null {
+  const [img, setImg] = useState<HTMLImageElement | null>(null);
+  useEffect(() => {
+    if (!src) {
+      setImg(null);
+      return;
+    }
+    let cancelled = false;
+    const el = new window.Image();
+    el.onload = () => !cancelled && setImg(el);
+    el.src = src;
+    return () => {
+      cancelled = true;
+    };
+  }, [src]);
+  return img;
+}
+
 /* ── Sub-components ──────────────────────────────────────────────────── */
 
-function CalibrationLine({
-  p1,
-  p2,
-  distanceLabel,
-  viewScale,
-}: {
-  p1: Point;
-  p2: Point;
-  distanceLabel: string;
-  viewScale: number;
-}) {
-  const mid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+function CalibrationLine({ p1, p2, label, viewScale }: { p1: Point; p2: Point; label: string; viewScale: number }) {
+  const labelWidth = 200 / viewScale;
   return (
     <Group listening={false}>
       <Line points={[p1.x, p1.y, p2.x, p2.y]} stroke="#1a7a4a" strokeWidth={2 / viewScale} />
       <Circle x={p1.x} y={p1.y} radius={5 / viewScale} fill="#1a7a4a" />
       <Circle x={p2.x} y={p2.y} radius={5 / viewScale} fill="#1a7a4a" />
       <Text
-        x={mid.x}
-        y={mid.y - 18 / viewScale}
-        text={distanceLabel}
+        x={(p1.x + p2.x) / 2 - labelWidth / 2}
+        y={(p1.y + p2.y) / 2 - 18 / viewScale}
+        width={labelWidth}
+        align="center"
+        text={label}
         fontSize={13 / viewScale}
         fontStyle="bold"
         fill="#1a7a4a"
-        offsetX={distanceLabel.length * 3.2}
       />
     </Group>
   );
 }
 
 function PlacingGhost({
-  x,
-  y,
+  at,
   template,
   pxPerMm,
+  viewScale,
 }: {
-  x: number;
-  y: number;
+  at: Point;
   template: PlacingTemplate;
   pxPerMm: number;
+  viewScale: number;
 }) {
-  const points = localOutline(template.widthMm, template.depthMm, template.shape).flatMap(p => [
-    p.x * pxPerMm,
-    p.y * pxPerMm,
-  ]);
+  const points = localOutline(template.widthMm, template.depthMm, template.shape).flatMap(p => [p.x * pxPerMm, p.y * pxPerMm]);
   return (
     <Line
-      x={x}
-      y={y}
+      x={at.x}
+      y={at.y}
       points={points}
       closed
       fill="#1a7a4a"
       opacity={0.32}
       stroke="#1a7a4a"
-      strokeWidth={1.5}
-      dash={[6, 4]}
+      strokeWidth={1.5 / viewScale}
+      dash={[6 / viewScale, 4 / viewScale]}
       listening={false}
     />
   );
 }
 
-function FurnitureRect({
+function FurnitureShape({
   item,
   pxPerMm,
   viewScale,
@@ -460,17 +419,11 @@ function FurnitureRect({
 }) {
   const w = item.widthMm * pxPerMm;
   const d = item.depthMm * pxPerMm;
-  const labelText = `${item.name}\n${unitsLabel}`;
-  const labelFont = useMemo(() => Math.max(10, Math.min(w, d) * 0.16), [w, d]);
   const outline = useMemo(
     () => localOutline(item.widthMm, item.depthMm, item.shape).flatMap(p => [p.x * pxPerMm, p.y * pxPerMm]),
     [item.widthMm, item.depthMm, item.shape, pxPerMm]
   );
   const anchor = badgeAnchor(item.widthMm, item.depthMm, item.shape);
-
-  // Overlap takes visual priority over the normal/selected stroke.
-  const strokeColor = overlapping ? OVERLAP_RED : '#1c1a17';
-  const strokeWidth = (overlapping ? 3 : selected ? 2.5 : 1) / viewScale;
 
   return (
     <Group
@@ -487,7 +440,7 @@ function FurnitureRect({
         e.cancelBubble = true;
         onSelect();
       }}
-      onDragStart={() => onSelect()}
+      onDragStart={onSelect}
       onDragEnd={e => onDragEnd(e.target.x(), e.target.y())}
     >
       <Line
@@ -495,8 +448,8 @@ function FurnitureRect({
         closed
         fill={overlapping ? OVERLAP_RED : item.color}
         opacity={overlapping ? 0.5 : 0.78}
-        stroke={strokeColor}
-        strokeWidth={strokeWidth}
+        stroke={overlapping ? OVERLAP_RED : '#1c1a17'}
+        strokeWidth={(overlapping ? 3 : selected ? 2.5 : 1) / viewScale}
         dash={overlapping ? [8 / viewScale, 4 / viewScale] : undefined}
         shadowColor="#000"
         shadowBlur={selected ? 8 : 0}
@@ -509,8 +462,8 @@ function FurnitureRect({
         height={d}
         align="center"
         verticalAlign="middle"
-        text={labelText}
-        fontSize={labelFont}
+        text={`${item.name}\n${unitsLabel}`}
+        fontSize={Math.max(10, Math.min(w, d) * 0.16)}
         fontStyle="600"
         fill="#fdfaf3"
         listening={false}

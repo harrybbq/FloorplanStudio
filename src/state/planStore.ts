@@ -16,6 +16,7 @@ import {
   loadPlans,
   loadUnits,
   saveActivePlanId,
+  saveImage,
   saveLibrary,
   savePlans,
   saveUnits,
@@ -35,14 +36,12 @@ function newId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function blankPlan(name = 'Untitled plan'): Plan {
+function blankPlan(name: string): Plan {
   const now = Date.now();
   return {
     id: newId(),
     name,
     imageDataUrl: null,
-    imageWidth: 0,
-    imageHeight: 0,
     calibration: null,
     furniture: [],
     walls: [],
@@ -51,8 +50,7 @@ function blankPlan(name = 'Untitled plan'): Plan {
   };
 }
 
-/** Drop a trailing point that lands on top of the previous one (e.g. from a double-click). */
-const DEDUPE_PX = 2;
+type DeletedFurniture = { planId: string; item: FurnitureItem; index: number };
 
 interface PlanState {
   plans: Plan[];
@@ -60,35 +58,38 @@ interface PlanState {
   units: UnitSystem;
   mode: Mode;
   selectedFurnitureId: string | null;
-  /** Calibration: first click is stored here; second click + distance commits a Calibration. */
+  /** Calibration in progress: first click, then second click (which opens the distance dialog). */
   pendingCalibrationPoint: Point | null;
-  /** Furniture template currently being placed (after Add Furniture form submission). */
+  pendingCalibrationSecond: Point | null;
+  /** Furniture template currently being placed. */
   placingTemplate: PlacingTemplate | null;
   /** In-progress wall polyline (image-space points). */
   draftWallPoints: Point[];
   /** Cross-plan furniture library. */
   library: SavedFurniture[];
-  /** Cached HTMLImageElement for the active plan's floorplan, for Konva. */
-  imageElement: HTMLImageElement | null;
+  /** The most recent delete, so it can be undone. */
+  lastDeleted: DeletedFurniture | null;
+  /** True when the last write to localStorage was refused (usually the quota). */
+  saveFailed: boolean;
 
-  // — derived helpers —
   active: () => Plan | null;
 
-  // — plan CRUD —
-  createPlan: (name?: string) => string;
+  // — plans —
+  createPlan: (name?: string) => void;
   deletePlan: (id: string) => void;
   selectPlan: (id: string) => void;
   renamePlan: (id: string, name: string) => void;
 
   // — image —
-  setPlanImage: (dataUrl: string, width: number, height: number) => void;
+  /** Replace the backdrop. Calibration resets unless one is supplied (e.g. the sample plan). */
+  setPlanImage: (dataUrl: string, calibration?: Calibration | null) => void;
   clearPlanImage: () => void;
 
   // — calibration —
-  // Canvas flow: setMode('calibrate') → first click stores pendingCalibrationPoint →
-  // second click opens the dialog → commitCalibrationWithPoints() (below) finalises it.
   startCalibration: () => void;
-  addCalibrationPoint: (p: Point) => void;
+  /** First call sets point 1; the next (at least `minDist` px away) sets point 2. */
+  addCalibrationPoint: (p: Point, minDist: number) => void;
+  commitCalibration: (distanceMm: number) => boolean;
   clearCalibration: () => void;
   cancelPendingCalibration: () => void;
 
@@ -96,15 +97,20 @@ interface PlanState {
   beginPlacing: (template: PlacingTemplate) => void;
   cancelPlacing: () => void;
   placeFurnitureAt: (x: number, y: number) => void;
-  updateFurniture: (id: string, patch: Partial<FurnitureItem>) => void;
+  updateFurniture: (id: string, patch: Partial<FurnitureItem> | ((f: FurnitureItem) => Partial<FurnitureItem>)) => void;
   deleteFurniture: (id: string) => void;
+  /** Copy an item, offset by `offset` px, and select the copy. */
+  duplicateFurniture: (id: string, offset: number) => void;
+  undoDelete: () => void;
+  dismissUndo: () => void;
   rotateFurniture: (id: string, deltaDeg: number) => void;
   flipFurniture: (id: string) => void;
   selectFurniture: (id: string | null) => void;
 
   // — walls —
   startWall: () => void;
-  addWallPoint: (p: Point) => void;
+  /** Ignores a point within `minDist` px of the previous one (e.g. a double-click). */
+  addWallPoint: (p: Point, minDist: number) => void;
   finishWall: () => void;
   cancelWall: () => void;
   deleteWall: (id: string) => void;
@@ -117,377 +123,255 @@ interface PlanState {
   // — misc —
   setMode: (mode: Mode) => void;
   setUnits: (units: UnitSystem) => void;
-  setImageElement: (el: HTMLImageElement | null) => void;
 }
 
-const initialPlans = loadPlans();
-const initialActiveId =
-  loadActivePlanId() && initialPlans.some(p => p.id === loadActivePlanId())
-    ? loadActivePlanId()
-    : initialPlans[0]?.id ?? null;
-
-export const usePlanStore = create<PlanState>((set, get) => ({
-  plans: initialPlans,
-  activePlanId: initialActiveId,
-  units: loadUnits(),
-  mode: 'select',
-  selectedFurnitureId: null,
+/** Back to plain select mode, dropping any half-finished tool interaction. */
+const IDLE = {
+  mode: 'select' as Mode,
   pendingCalibrationPoint: null,
+  pendingCalibrationSecond: null,
   placingTemplate: null,
-  draftWallPoints: [],
-  library: loadLibrary(),
-  imageElement: null,
+  draftWallPoints: [] as Point[],
+};
 
-  active: () => {
+/** IDLE plus everything that belongs to the previous plan. */
+const PLAN_SWITCH = { ...IDLE, selectedFurnitureId: null, lastDeleted: null };
+
+const initialPlans = loadPlans();
+const storedActiveId = loadActivePlanId();
+const initialActiveId = initialPlans.some(p => p.id === storedActiveId)
+  ? storedActiveId
+  : initialPlans[0]?.id ?? null;
+
+export const usePlanStore = create<PlanState>((set, get) => {
+  /** Apply `fn` to the active plan, persist, and merge `extra` into state. */
+  function mutateActive(fn: (p: Plan) => Plan, extra: Partial<PlanState> = {}): void {
     const { plans, activePlanId } = get();
-    return plans.find(p => p.id === activePlanId) ?? null;
-  },
+    if (!activePlanId) return;
+    const updated = plans.map(p => (p.id === activePlanId ? { ...fn(p), updatedAt: Date.now() } : p));
+    set({ plans: updated, saveFailed: !savePlans(updated), ...extra });
+  }
 
-  createPlan: (name) => {
-    const p = blankPlan(name);
-    set(state => {
-      const plans = [...state.plans, p];
-      savePlans(plans);
+  return {
+    plans: initialPlans,
+    activePlanId: initialActiveId,
+    units: loadUnits(),
+    ...PLAN_SWITCH,
+    library: loadLibrary(),
+    saveFailed: false,
+
+    active: () => {
+      const { plans, activePlanId } = get();
+      return plans.find(p => p.id === activePlanId) ?? null;
+    },
+
+    // — plans —
+    createPlan: name => {
+      const { plans } = get();
+      const p = blankPlan(name ?? nextPlanName(plans));
+      const updated = [...plans, p];
       saveActivePlanId(p.id);
-      return {
-        plans,
-        activePlanId: p.id,
-        mode: 'select' as Mode,
-        selectedFurnitureId: null,
-        pendingCalibrationPoint: null,
-        placingTemplate: null,
-        draftWallPoints: [],
-        imageElement: null,
+      set({ plans: updated, activePlanId: p.id, saveFailed: !savePlans(updated), ...PLAN_SWITCH });
+    },
+
+    deletePlan: id => {
+      const { plans, activePlanId } = get();
+      const updated = plans.filter(p => p.id !== id);
+      saveImage(id, null);
+      const wasActive = activePlanId === id;
+      const nextActive = wasActive ? updated[0]?.id ?? null : activePlanId;
+      saveActivePlanId(nextActive);
+      set({
+        plans: updated,
+        activePlanId: nextActive,
+        saveFailed: !savePlans(updated),
+        ...(wasActive ? PLAN_SWITCH : {}),
+      });
+    },
+
+    selectPlan: id => {
+      if (id === get().activePlanId) return;
+      saveActivePlanId(id);
+      set({ activePlanId: id, ...PLAN_SWITCH });
+    },
+
+    renamePlan: (id, name) => {
+      const updated = get().plans.map(p => (p.id === id ? { ...p, name, updatedAt: Date.now() } : p));
+      set({ plans: updated, saveFailed: !savePlans(updated) });
+    },
+
+    // — image —
+    setPlanImage: (dataUrl, calibration = null) => {
+      const id = get().activePlanId;
+      if (!id) return;
+      const imageSaved = saveImage(id, dataUrl);
+      mutateActive(p => ({ ...p, imageDataUrl: dataUrl, calibration }), IDLE);
+      if (!imageSaved) set({ saveFailed: true });
+    },
+
+    clearPlanImage: () => {
+      const id = get().activePlanId;
+      if (!id) return;
+      saveImage(id, null);
+      mutateActive(p => ({ ...p, imageDataUrl: null, calibration: null }), { ...IDLE, selectedFurnitureId: null });
+    },
+
+    // — calibration —
+    startCalibration: () => set({ ...IDLE, mode: 'calibrate', selectedFurnitureId: null }),
+
+    addCalibrationPoint: (p, minDist) => {
+      const first = get().pendingCalibrationPoint;
+      if (!first) set({ pendingCalibrationPoint: p });
+      else if (Math.hypot(p.x - first.x, p.y - first.y) >= minDist) set({ pendingCalibrationSecond: p });
+    },
+
+    commitCalibration: distanceMm => {
+      const { pendingCalibrationPoint: a, pendingCalibrationSecond: b } = get();
+      if (!a || !b || !(distanceMm > 0)) return false;
+      const px = Math.hypot(b.x - a.x, b.y - a.y);
+      if (px <= 0) return false;
+      mutateActive(p => ({ ...p, calibration: { points: [a, b], distanceMm, pxPerMm: px / distanceMm } }), IDLE);
+      return true;
+    },
+
+    clearCalibration: () => mutateActive(p => ({ ...p, calibration: null }), IDLE),
+
+    cancelPendingCalibration: () => set(IDLE),
+
+    // — furniture —
+    beginPlacing: template => set({ ...IDLE, mode: 'placing', placingTemplate: template, selectedFurnitureId: null }),
+
+    cancelPlacing: () => set(IDLE),
+
+    placeFurnitureAt: (x, y) => {
+      const template = get().placingTemplate;
+      if (!template) return;
+      const item: FurnitureItem = {
+        id: newId(),
+        name: template.name,
+        x,
+        y,
+        widthMm: template.widthMm,
+        depthMm: template.depthMm,
+        heightMm: template.heightMm,
+        rotation: 0,
+        shape: template.shape,
+        source: template.source ?? 'manual',
+        confidence: template.confidence ?? 'user-entered',
+        color: template.color ?? FURNITURE_COLORS[Math.floor(Math.random() * FURNITURE_COLORS.length)],
       };
-    });
-    return p.id;
-  },
+      mutateActive(p => ({ ...p, furniture: [...p.furniture, item] }), { ...IDLE, selectedFurnitureId: item.id });
+    },
 
-  deletePlan: (id) => {
-    set(state => {
-      const plans = state.plans.filter(p => p.id !== id);
-      savePlans(plans);
-      const newActive = state.activePlanId === id ? (plans[0]?.id ?? null) : state.activePlanId;
-      saveActivePlanId(newActive);
-      return {
-        plans,
-        activePlanId: newActive,
-        imageElement: state.activePlanId === id ? null : state.imageElement,
-      };
-    });
-  },
+    updateFurniture: (id, patch) =>
+      mutateActive(p => ({
+        ...p,
+        furniture: p.furniture.map(f => (f.id === id ? { ...f, ...(typeof patch === 'function' ? patch(f) : patch) } : f)),
+      })),
 
-  selectPlan: (id) => {
-    set({
-      activePlanId: id,
-      selectedFurnitureId: null,
-      mode: 'select',
-      pendingCalibrationPoint: null,
-      placingTemplate: null,
-      draftWallPoints: [],
-      imageElement: null,
-    });
-    saveActivePlanId(id);
-  },
+    deleteFurniture: id => {
+      const plan = get().active();
+      const index = plan?.furniture.findIndex(f => f.id === id) ?? -1;
+      if (!plan || index < 0) return;
+      const { selectedFurnitureId } = get();
+      mutateActive(p => ({ ...p, furniture: p.furniture.filter(f => f.id !== id) }), {
+        selectedFurnitureId: selectedFurnitureId === id ? null : selectedFurnitureId,
+        lastDeleted: { planId: plan.id, item: plan.furniture[index], index },
+      });
+    },
 
-  renamePlan: (id, name) => {
-    set(state => {
-      const plans = state.plans.map(p =>
-        p.id === id ? { ...p, name, updatedAt: Date.now() } : p
+    duplicateFurniture: (id, offset) => {
+      const source = get().active()?.furniture.find(f => f.id === id);
+      if (!source) return;
+      const copy: FurnitureItem = { ...source, id: newId(), x: source.x + offset, y: source.y + offset };
+      mutateActive(p => ({ ...p, furniture: [...p.furniture, copy] }), { selectedFurnitureId: copy.id });
+    },
+
+    undoDelete: () => {
+      const { lastDeleted, activePlanId } = get();
+      if (!lastDeleted || lastDeleted.planId !== activePlanId) return set({ lastDeleted: null });
+      mutateActive(
+        p => {
+          const furniture = [...p.furniture];
+          furniture.splice(Math.min(lastDeleted.index, furniture.length), 0, lastDeleted.item);
+          return { ...p, furniture };
+        },
+        { lastDeleted: null, selectedFurnitureId: lastDeleted.item.id }
       );
-      savePlans(plans);
-      return { plans };
-    });
-  },
+    },
 
-  setPlanImage: (dataUrl, width, height) => {
-    const { activePlanId, plans } = get();
-    if (!activePlanId) return;
-    const updated = plans.map(p =>
-      p.id === activePlanId
-        ? {
-            ...p,
-            imageDataUrl: dataUrl,
-            imageWidth: width,
-            imageHeight: height,
-            // reset calibration when the image changes — old px scale is meaningless
-            calibration: null,
-            updatedAt: Date.now(),
-          }
-        : p
-    );
-    savePlans(updated);
-    set({ plans: updated });
-  },
+    dismissUndo: () => set({ lastDeleted: null }),
 
-  clearPlanImage: () => {
-    const { plans, activePlanId } = get();
-    if (!activePlanId) return;
-    // Remove the backdrop + scale (calibration is image-relative). Furniture/walls stay.
-    const updated = plans.map(p =>
-      p.id === activePlanId
-        ? { ...p, imageDataUrl: null, imageWidth: 0, imageHeight: 0, calibration: null, updatedAt: Date.now() }
-        : p
-    );
-    savePlans(updated);
-    set({ plans: updated, imageElement: null, mode: 'select', selectedFurnitureId: null });
-  },
+    rotateFurniture: (id, deltaDeg) =>
+      get().updateFurniture(id, f => ({ rotation: (((f.rotation + deltaDeg) % 360) + 360) % 360 })),
 
-  startCalibration: () => {
-    set({ mode: 'calibrate', pendingCalibrationPoint: null, selectedFurnitureId: null });
-  },
+    flipFurniture: id => get().updateFurniture(id, f => ({ shape: flipShapeX(f.shape) })),
 
-  addCalibrationPoint: (p) => {
-    set({ pendingCalibrationPoint: p });
-  },
+    selectFurniture: id => set({ selectedFurnitureId: id }),
 
-  clearCalibration: () => {
-    const { plans, activePlanId } = get();
-    if (!activePlanId) return;
-    const updated = plans.map(p =>
-      p.id === activePlanId ? { ...p, calibration: null, updatedAt: Date.now() } : p
-    );
-    savePlans(updated);
-    set({ plans: updated, pendingCalibrationPoint: null });
-  },
+    // — walls —
+    startWall: () => set({ ...IDLE, mode: 'wall', selectedFurnitureId: null }),
 
-  cancelPendingCalibration: () => {
-    set({ pendingCalibrationPoint: null, mode: 'select' });
-  },
-
-  beginPlacing: (template) => {
-    set({ mode: 'placing', placingTemplate: template, selectedFurnitureId: null });
-  },
-
-  cancelPlacing: () => {
-    set({ mode: 'select', placingTemplate: null });
-  },
-
-  placeFurnitureAt: (x, y) => {
-    const { plans, activePlanId, placingTemplate } = get();
-    if (!activePlanId || !placingTemplate) return;
-    const item: FurnitureItem = {
-      id: newId(),
-      name: placingTemplate.name,
-      x,
-      y,
-      widthMm: placingTemplate.widthMm,
-      depthMm: placingTemplate.depthMm,
-      heightMm: placingTemplate.heightMm,
-      rotation: 0,
-      shape: placingTemplate.shape,
-      source: placingTemplate.source ?? 'manual',
-      confidence: placingTemplate.confidence ?? 'user-entered',
-      color:
-        placingTemplate.color ??
-        FURNITURE_COLORS[Math.floor(Math.random() * FURNITURE_COLORS.length)],
-    };
-    const updated = plans.map(p =>
-      p.id === activePlanId
-        ? { ...p, furniture: [...p.furniture, item], updatedAt: Date.now() }
-        : p
-    );
-    savePlans(updated);
-    set({
-      plans: updated,
-      selectedFurnitureId: item.id,
-      mode: 'select',
-      placingTemplate: null,
-    });
-  },
-
-  updateFurniture: (id, patch) => {
-    const { plans, activePlanId } = get();
-    if (!activePlanId) return;
-    const updated = plans.map(p =>
-      p.id === activePlanId
-        ? {
-            ...p,
-            furniture: p.furniture.map(f => (f.id === id ? { ...f, ...patch } : f)),
-            updatedAt: Date.now(),
-          }
-        : p
-    );
-    savePlans(updated);
-    set({ plans: updated });
-  },
-
-  deleteFurniture: (id) => {
-    const { plans, activePlanId, selectedFurnitureId } = get();
-    if (!activePlanId) return;
-    const updated = plans.map(p =>
-      p.id === activePlanId
-        ? { ...p, furniture: p.furniture.filter(f => f.id !== id), updatedAt: Date.now() }
-        : p
-    );
-    savePlans(updated);
-    set({
-      plans: updated,
-      selectedFurnitureId: selectedFurnitureId === id ? null : selectedFurnitureId,
-    });
-  },
-
-  rotateFurniture: (id, deltaDeg) => {
-    const { plans, activePlanId } = get();
-    if (!activePlanId) return;
-    const updated = plans.map(p =>
-      p.id === activePlanId
-        ? {
-            ...p,
-            furniture: p.furniture.map(f =>
-              f.id === id ? { ...f, rotation: (f.rotation + deltaDeg + 360) % 360 } : f
-            ),
-            updatedAt: Date.now(),
-          }
-        : p
-    );
-    savePlans(updated);
-    set({ plans: updated });
-  },
-
-  flipFurniture: (id) => {
-    const { plans, activePlanId } = get();
-    if (!activePlanId) return;
-    const updated = plans.map(p =>
-      p.id === activePlanId
-        ? {
-            ...p,
-            furniture: p.furniture.map(f =>
-              f.id === id ? { ...f, shape: flipShapeX(f.shape) } : f
-            ),
-            updatedAt: Date.now(),
-          }
-        : p
-    );
-    savePlans(updated);
-    set({ plans: updated });
-  },
-
-  selectFurniture: (id) => set({ selectedFurnitureId: id }),
-
-  // — walls —
-  startWall: () => {
-    set({ mode: 'wall', draftWallPoints: [], selectedFurnitureId: null, placingTemplate: null });
-  },
-
-  addWallPoint: (p) => {
-    set(state => {
-      const pts = state.draftWallPoints;
+    addWallPoint: (p, minDist) => {
+      const pts = get().draftWallPoints;
       const last = pts[pts.length - 1];
-      if (last && Math.hypot(p.x - last.x, p.y - last.y) < DEDUPE_PX) {
-        return state; // ignore near-duplicate (e.g. the two clicks of a double-click)
-      }
-      return { draftWallPoints: [...pts, p] };
-    });
-  },
+      if (last && Math.hypot(p.x - last.x, p.y - last.y) < minDist) return;
+      set({ draftWallPoints: [...pts, p] });
+    },
 
-  finishWall: () => {
-    const { draftWallPoints, plans, activePlanId } = get();
-    if (!activePlanId || draftWallPoints.length < 2) {
-      set({ draftWallPoints: [], mode: 'select' });
-      return;
-    }
-    const wall: Wall = { id: newId(), points: draftWallPoints };
-    const updated = plans.map(p =>
-      p.id === activePlanId
-        ? { ...p, walls: [...p.walls, wall], updatedAt: Date.now() }
-        : p
-    );
-    savePlans(updated);
-    set({ plans: updated, draftWallPoints: [], mode: 'select' });
-  },
+    finishWall: () => {
+      const points = get().draftWallPoints;
+      if (points.length < 2) return set(IDLE);
+      const wall: Wall = { id: newId(), points };
+      mutateActive(p => ({ ...p, walls: [...p.walls, wall] }), IDLE);
+    },
 
-  cancelWall: () => set({ draftWallPoints: [], mode: 'select' }),
+    cancelWall: () => set(IDLE),
 
-  deleteWall: (id) => {
-    const { plans, activePlanId } = get();
-    if (!activePlanId) return;
-    const updated = plans.map(p =>
-      p.id === activePlanId
-        ? { ...p, walls: p.walls.filter(w => w.id !== id), updatedAt: Date.now() }
-        : p
-    );
-    savePlans(updated);
-    set({ plans: updated });
-  },
+    deleteWall: id => mutateActive(p => ({ ...p, walls: p.walls.filter(w => w.id !== id) })),
 
-  clearWalls: () => {
-    const { plans, activePlanId } = get();
-    if (!activePlanId) return;
-    const updated = plans.map(p =>
-      p.id === activePlanId ? { ...p, walls: [], updatedAt: Date.now() } : p
-    );
-    savePlans(updated);
-    set({ plans: updated });
-  },
+    clearWalls: () => mutateActive(p => ({ ...p, walls: [] })),
 
-  // — library —
-  addToLibrary: (item) => {
-    set(state => {
-      // De-dupe by name + dimensions so the library doesn't fill with copies.
-      const exists = state.library.some(
-        l =>
-          l.name.toLowerCase() === item.name.toLowerCase() &&
-          l.widthMm === item.widthMm &&
-          l.depthMm === item.depthMm
-      );
-      if (exists) return state;
-      const library = [...state.library, { ...item, id: newId() }];
-      saveLibrary(library);
-      return { library };
-    });
-  },
+    // — library —
+    addToLibrary: item => {
+      const { library } = get();
+      const same = (l: SavedFurniture) =>
+        l.name.toLowerCase() === item.name.toLowerCase() &&
+        l.widthMm === item.widthMm &&
+        l.depthMm === item.depthMm &&
+        l.heightMm === item.heightMm &&
+        JSON.stringify(l.shape ?? null) === JSON.stringify(item.shape ?? null);
+      if (library.some(same)) return;
+      const updated = [...library, { ...item, id: newId() }];
+      set({ library: updated, saveFailed: !saveLibrary(updated) });
+    },
 
-  removeFromLibrary: (id) => {
-    set(state => {
-      const library = state.library.filter(l => l.id !== id);
-      saveLibrary(library);
-      return { library };
-    });
-  },
+    removeFromLibrary: id => {
+      const updated = get().library.filter(l => l.id !== id);
+      set({ library: updated, saveFailed: !saveLibrary(updated) });
+    },
 
-  setMode: (mode) =>
-    set({ mode, pendingCalibrationPoint: null, placingTemplate: null, draftWallPoints: [] }),
+    // — misc —
+    setMode: mode => set({ ...IDLE, mode }),
 
-  setUnits: (units) => {
-    saveUnits(units);
-    set({ units });
-  },
-
-  setImageElement: (el) => set({ imageElement: el }),
-}));
-
-/**
- * Helper called by the canvas when the user picks the second calibration point.
- * Lives outside the store interface to keep the action signature simple.
- */
-export function commitCalibrationWithPoints(
-  p1: Point,
-  p2: Point,
-  distanceMm: number
-): Calibration | null {
-  const dx = p2.x - p1.x;
-  const dy = p2.y - p1.y;
-  const pxDist = Math.sqrt(dx * dx + dy * dy);
-  if (pxDist <= 0 || distanceMm <= 0) return null;
-  const calibration: Calibration = {
-    points: [p1, p2],
-    distanceMm,
-    pxPerMm: pxDist / distanceMm,
+    setUnits: units => {
+      saveUnits(units);
+      set({ units });
+    },
   };
-  const state = usePlanStore.getState();
-  const { plans, activePlanId } = state;
-  if (!activePlanId) return null;
-  const updated = plans.map(p =>
-    p.id === activePlanId ? { ...p, calibration, updatedAt: Date.now() } : p
-  );
-  savePlans(updated);
-  usePlanStore.setState({
-    plans: updated,
-    pendingCalibrationPoint: null,
-    mode: 'select',
-  });
-  return calibration;
+});
+
+/** "Plan N" using the lowest N not already taken. */
+function nextPlanName(plans: Plan[]): string {
+  const taken = new Set(plans.map(p => p.name));
+  let n = plans.length + 1;
+  for (let i = 1; i <= plans.length + 1; i++) {
+    if (!taken.has(`Plan ${i}`)) {
+      n = i;
+      break;
+    }
+  }
+  return `Plan ${n}`;
 }
 
 /** Ensure there's always at least one plan to work in. */

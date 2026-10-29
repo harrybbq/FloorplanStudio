@@ -28,17 +28,28 @@ body {
   .panel {
     @apply bg-bg-raised/90 border border-line rounded-lg shadow-sm;
   }
+  .btn,
+  .btn-primary,
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-1.5 text-sm rounded-md transition-colors
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-em/40
+      disabled:opacity-45 disabled:cursor-not-allowed disabled:pointer-events-none;
+  }
   .btn {
-    @apply inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border border-line bg-cream text-ink hover:bg-bg-overlay transition-colors;
+    @apply px-3 py-1.5 font-medium border border-line bg-cream text-ink hover:bg-bg-overlay;
   }
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-sm font-semibold rounded-md bg-em text-white hover:bg-em-mid transition-colors;
+    @apply px-3 py-1.5 font-semibold bg-em text-white hover:bg-em-mid;
   }
   .btn-ghost {
-    @apply inline-flex items-center justify-center gap-1.5 px-2 py-1 text-sm rounded-md text-ink-mid hover:bg-bg-overlay transition-colors;
+    @apply px-2 py-1 text-ink-mid hover:bg-bg-overlay;
   }
   .btn-active {
     @apply !bg-em !text-white !border-em;
+  }
+  /* Secondary row actions: shown on hover, but always reachable by keyboard. */
+  .reveal-on-hover {
+    @apply opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100;
   }
   .input {
     @apply w-full px-2.5 py-1.5 text-sm rounded-md border border-line bg-cream text-ink focus:outline-none focus:ring-2 focus:ring-em/30 focus:border-em;
