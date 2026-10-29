@@ -7,7 +7,9 @@
  * calibration, so the stored pixel space is the one the user calibrates against.
  */
 const MAX_SIDE = 2400;
-const KEEP_IF_UNDER_BYTES = 1_200_000;
+// Base64 inflates ~4/3 and Chrome counts UTF-16 (2 bytes/char), so a 500 KB file
+// costs ~1.3 MB of the ~5 MB quota. Anything bigger gets re-encoded.
+const KEEP_IF_UNDER_BYTES = 500_000;
 const QUALITY = 0.9;
 
 function readAsDataUrl(file: Blob): Promise<string> {
