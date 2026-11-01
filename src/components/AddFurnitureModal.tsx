@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type {
   FurnitureDimensions,
   FurniturePreset,
@@ -9,6 +9,17 @@ import type {
   UnitSystem,
 } from '../types';
 import { formatLength, lengthPlaceholder, parseLength } from '../lib/units';
+import {
+  CATALOG_CATEGORIES,
+  loadCatalog,
+  normalize,
+  searchCatalog,
+  STORES,
+  type CatalogCategory,
+  type CatalogItem,
+  type Store,
+} from '../lib/furniture/catalog';
+import { ProductThumb } from './ProductThumb';
 import { FURNITURE_PRESETS, PRESET_CATEGORIES } from '../lib/presets';
 import { defaultRegistry } from '../lib/furniture/providers';
 import { usePlanStore } from '../state/planStore';
@@ -18,26 +29,26 @@ import { Modal } from './Modal';
 import { Segmented } from './Segmented';
 import { DimensionFields, EMPTY_DIMENSIONS, parseDimensions, SaveToLibraryCheckbox, TextField, type ManualItem } from './FormFields';
 
-type Tab = 'custom' | 'presets' | 'maker' | 'lookup' | 'library';
+type Tab = 'catalog' | 'custom' | 'presets' | 'maker' | 'library';
 const TABS: { id: Tab; label: string }[] = [
+  { id: 'catalog', label: 'Catalog' },
   { id: 'custom', label: 'Custom' },
   { id: 'presets', label: 'Presets' },
   { id: 'maker', label: 'Maker' },
-  { id: 'lookup', label: 'Lookup' },
   { id: 'library', label: 'Library' },
 ];
 
 /**
  * One "add furniture" surface, five sources, one placement flow:
- *   Custom (type dimensions) · Presets (standard sizes) · Maker (draw a shape) ·
- *   Lookup (product catalog → confirm step) · Library (re-use a saved piece)
+ *   Catalog (real retailer products) · Custom (type dimensions) · Presets
+ *   (standard sizes) · Maker (draw a shape) · Library (re-use a saved piece)
  *
  * Picking an item calls beginPlacing() and closes — the user then clicks the
  * canvas to drop it. Tabs stay mounted so a half-filled form or half-drawn
  * shape survives switching tabs.
  */
 export function AddFurnitureModal({ units, onClose }: { units: UnitSystem; onClose: () => void }) {
-  const [tab, setTab] = useState<Tab>('custom');
+  const [tab, setTab] = useState<Tab>('catalog');
   const [confirming, setConfirming] = useState<FurnitureDimensions | null>(null);
   const [prefillName, setPrefillName] = useState('');
   const library = usePlanStore(s => s.library);
@@ -60,7 +71,7 @@ export function AddFurnitureModal({ units, onClose }: { units: UnitSystem; onClo
 
   return (
     <>
-      <Modal title="Add furniture" onClose={onClose} width={480}>
+      <Modal title="Add furniture" onClose={onClose} width={560}>
         <div role="tablist" aria-label="Furniture source" className="flex gap-1 border-b border-line px-5 mt-3">
           {TABS.map(t => (
             <button
@@ -95,9 +106,12 @@ export function AddFurnitureModal({ units, onClose }: { units: UnitSystem; onClo
               {t.id === 'custom' && <CustomTab units={units} initialName={prefillName} onPlace={place} onSaveToLibrary={saveManual} />}
               {t.id === 'presets' && <PresetsTab units={units} onPlace={place} onSaveToLibrary={addToLibrary} />}
               {t.id === 'maker' && <MakerTab units={units} onPlace={place} onSaveToLibrary={saveManual} />}
-              {t.id === 'lookup' && (
-                <LookupTab
-                  onResult={setConfirming}
+              {t.id === 'catalog' && (
+                <CatalogTab
+                  units={units}
+                  onPlace={place}
+                  onSaveToLibrary={addToLibrary}
+                  onRemoteResult={setConfirming}
                   onManual={q => {
                     setPrefillName(q);
                     setTab('custom');
@@ -144,7 +158,7 @@ function CustomTab({
   const [saveToLib, setSaveToLib] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // "Enter manually" from the Lookup tab hands its query over as the name.
+  // "Enter manually" from the Catalog tab hands its query over as the name.
   useEffect(() => {
     if (initialName) setName(initialName);
   }, [initialName]);
@@ -282,22 +296,28 @@ function ItemRow({
   name,
   detail,
   swatch,
+  image,
   onPlace,
   secondary,
 }: {
   name: string;
-  detail: string;
+  detail: ReactNode;
   swatch?: string;
+  /** Product thumbnail (falls back to a category icon). */
+  image?: { src?: string | null; category?: string };
   onPlace: () => void;
   secondary?: { label: string; title: string; onClick: () => void; danger?: boolean };
 }) {
   return (
     <li className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-bg-overlay group">
-      {swatch && <span className="w-3 h-3 rounded-sm flex-shrink-0" style={{ background: swatch }} />}
-      <button className="flex-1 text-left" onClick={onPlace}>
-        <div className="text-sm font-medium">{name}</div>
+      {image && <ProductThumb src={image.src} category={image.category} />}
+      {swatch && !image && <span className="w-3 h-3 rounded-sm flex-shrink-0" style={{ background: swatch }} />}
+      <div className="flex-1 min-w-0">
+        <button className="block w-full text-left text-sm font-medium truncate" onClick={onPlace} title={name}>
+          {name}
+        </button>
         <div className="text-xs text-ink-muted">{detail}</div>
-      </button>
+      </div>
       {secondary && (
         <button
           className={`btn-ghost text-xs reveal-on-hover ${secondary.danger ? '!text-amber' : ''}`}
@@ -315,68 +335,173 @@ function ItemRow({
   );
 }
 
-/* ── Lookup ──────────────────────────────────────────────────────────── */
+/* ── Catalog ─────────────────────────────────────────────────────────── */
 
-function LookupTab({
-  onResult,
+const MAX_SHOWN = 80;
+
+/** Catalog item → placement template. Names get the store unless they already say it ("Argos Home …"). */
+function fromCatalog(item: CatalogItem): PlacingTemplate {
+  const store = STORES[item.store];
+  const name = normalize(item.name).startsWith(normalize(store)) ? item.name : `${store} ${item.name}`;
+  return {
+    name,
+    widthMm: item.widthMm,
+    depthMm: item.depthMm,
+    heightMm: item.heightMm,
+    shape: item.shape,
+    source: 'catalog',
+    confidence: item.confidence,
+    imageUrl: item.imageUrl ?? undefined,
+    productUrl: item.productUrl ?? undefined,
+  };
+}
+
+function CatalogTab({
+  units,
+  onPlace,
+  onSaveToLibrary,
   onManual,
+  onRemoteResult,
 }: {
-  onResult: (dims: FurnitureDimensions) => void;
+  units: UnitSystem;
+  onPlace: (t: PlacingTemplate) => void;
+  onSaveToLibrary: (item: Omit<SavedFurniture, 'id'>) => void;
   onManual: (query: string) => void;
+  onRemoteResult: (dims: FurnitureDimensions) => void;
 }) {
+  const [items, setItems] = useState<CatalogItem[] | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [query, setQuery] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [noMatch, setNoMatch] = useState(false);
+  const [store, setStore] = useState<Store | 'all'>('all');
+  const [category, setCategory] = useState<CatalogCategory | 'all'>('all');
+  const [searchingOnline, setSearchingOnline] = useState(false);
+  const [onlineMiss, setOnlineMiss] = useState(false);
 
-  async function search(e: React.FormEvent) {
-    e.preventDefault();
-    const q = query.trim();
-    if (!q || loading) return;
-    setLoading(true);
-    setNoMatch(false);
+  useEffect(() => {
+    loadCatalog().then(setItems, () => setLoadFailed(true));
+  }, []);
+
+  const results = useMemo(() => (items ? searchCatalog(items, { query, store, category }) : []), [items, query, store, category]);
+  const q = query.trim();
+
+  async function searchOnline() {
+    if (!q || searchingOnline) return;
+    setSearchingOnline(true);
+    setOnlineMiss(false);
     try {
       const result = await defaultRegistry.lookup(q);
-      if (result) onResult(result);
-      else setNoMatch(true);
+      if (result) onRemoteResult(result);
+      else setOnlineMiss(true);
     } finally {
-      setLoading(false);
+      setSearchingOnline(false);
     }
   }
 
   return (
     <div className="space-y-3">
-      <p className="text-sm text-ink-mid">Type a product name to look up its dimensions. A match opens a confirm step before placing.</p>
-      <form onSubmit={search} className="flex gap-2">
-        <input
-          className="input"
-          aria-label="Product name"
-          placeholder="e.g. IKEA Billy bookcase"
-          value={query}
-          onChange={e => {
-            setQuery(e.target.value);
-            setNoMatch(false);
-          }}
-        />
-        <button type="submit" className="btn-primary whitespace-nowrap" disabled={loading || !query.trim()}>
-          {loading ? 'Searching…' : 'Search'}
-        </button>
-      </form>
+      <input
+        className="input"
+        aria-label="Search the catalog"
+        placeholder="Search, e.g. billy, kivik corner, ottoman bed…"
+        value={query}
+        onChange={e => {
+          setQuery(e.target.value);
+          setOnlineMiss(false);
+        }}
+      />
+      <Chips label="Store" value={store} onChange={setStore} options={[['all', 'All stores'], ...(Object.entries(STORES) as [Store, string][])]} />
+      <Chips label="Category" value={category} onChange={setCategory} options={[['all', 'All'], ...CATALOG_CATEGORIES.map(c => [c, c] as [CatalogCategory, string])]} />
 
-      {noMatch && (
-        <div className="rounded-md border border-line bg-bg-overlay/50 p-3 text-sm" role="status">
-          <p className="text-ink-mid mb-2">
-            No match for “{query.trim()}” in the built-in catalog. You can enter the dimensions yourself.
-          </p>
-          <button className="btn" onClick={() => onManual(query.trim())}>
-            Enter manually
-          </button>
-        </div>
+      {loadFailed && <p className="text-sm text-amber">Couldn't load the catalog. Check your connection and reopen this window.</p>}
+      {!items && !loadFailed && <p className="text-sm text-ink-muted">Loading catalog…</p>}
+
+      {items && (
+        <ul className="space-y-1 max-h-[46vh] overflow-y-auto" aria-label="Catalog results">
+          {results.slice(0, MAX_SHOWN).map((item, i) => {
+            const t = fromCatalog(item);
+            return (
+              <ItemRow
+                key={`${item.store}-${item.name}-${item.widthMm}-${item.depthMm}-${i}`}
+                name={t.name}
+                image={{ src: item.imageUrl, category: item.category }}
+                detail={
+                  <>
+                    {formatLength(item.widthMm, units)} × {formatLength(item.depthMm, units)}
+                    {item.shape?.kind === 'lshape' && ' · L-shape'}
+                    {item.shape?.kind === 'polygon' && ' · round'}
+                    {item.confidence === 'estimated' && ' · estimated'}
+                    {' · '}
+                    {item.productUrl ? (
+                      <a className="hover:text-em hover:underline" href={item.productUrl} target="_blank" rel="noreferrer noopener">
+                        {STORES[item.store]} ↗
+                      </a>
+                    ) : (
+                      STORES[item.store]
+                    )}
+                  </>
+                }
+                onPlace={() => onPlace(t)}
+                secondary={{ label: '+ lib', title: `Save ${t.name} to library`, onClick: () => onSaveToLibrary({ ...t, source: 'catalog', confidence: item.confidence }) }}
+              />
+            );
+          })}
+          {results.length > MAX_SHOWN && (
+            <li className="text-xs text-ink-muted py-2 text-center">
+              Showing {MAX_SHOWN} of {results.length}. Type more or pick a store to narrow it down.
+            </li>
+          )}
+          {results.length === 0 && (
+            <li className="rounded-md border border-line bg-bg-overlay/50 p-3 text-sm space-y-2" role="status">
+              <p className="text-ink-mid">{q ? `Nothing in the catalog matches “${q}”.` : 'Nothing in this store and category.'}</p>
+              <div className="flex gap-2">
+                <button className="btn" onClick={() => onManual(q)}>
+                  Enter manually
+                </button>
+                {q && defaultRegistry.available && (
+                  <button className="btn" onClick={searchOnline} disabled={searchingOnline}>
+                    {searchingOnline ? 'Searching…' : 'Look it up online'}
+                  </button>
+                )}
+              </div>
+              {onlineMiss && <p className="text-xs text-ink-muted">No result online either.</p>}
+            </li>
+          )}
+        </ul>
       )}
 
       <p className="text-xs text-ink-muted">
-        Built-in catalog of common IKEA, B&amp;Q and Tesco pieces — e.g. Billy, Kallax, Malm, Pax, Ektorp, Poäng,
-        Form Darwin, GoodHome, Fox &amp; Ivy wardrobe, Tesco sofa. Dimensions are approximate — confirm before placing.
+        Sizes from IKEA, B&amp;Q, Argos, John Lewis and Next product pages (Nov 2026). “Estimated” means a marketplace
+        seller's or a generic size. Check the product page before you buy.
       </p>
+    </div>
+  );
+}
+
+function Chips<T extends string>({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: T;
+  onChange: (v: T) => void;
+  options: [T, string][];
+}) {
+  return (
+    <div className="flex flex-wrap gap-1" role="group" aria-label={label}>
+      {options.map(([v, text]) => (
+        <button
+          key={v}
+          aria-pressed={value === v}
+          className={`px-2 py-0.5 text-xs rounded-full border transition-colors ${
+            value === v ? 'bg-em text-white border-em' : 'border-line text-ink-mid hover:bg-bg-overlay'
+          }`}
+          onClick={() => onChange(v)}
+        >
+          {text}
+        </button>
+      ))}
     </div>
   );
 }
@@ -409,6 +534,7 @@ function LibraryTab({
           name={item.name}
           detail={`${formatLength(item.widthMm, units)} × ${formatLength(item.depthMm, units)}`}
           swatch={item.color ?? '#8b7355'}
+          image={item.imageUrl ? { src: item.imageUrl } : undefined}
           onPlace={() => onPlace(item)}
           secondary={{ label: '✕', title: `Remove ${item.name} from library`, onClick: () => onRemove(item.id), danger: true }}
         />

@@ -1,16 +1,13 @@
 import type { FurnitureDimensions, FurnitureSource } from '../../types';
-import { matchCatalog } from './sampleCatalog';
 
 /**
- * FurnitureProvider — the swap point for furniture-dimension lookups.
+ * FurnitureProvider — the swap point for looking up a product that isn't in
+ * the built-in catalog (./catalog.ts, which the Catalog tab searches directly).
  *
  * The registry asks providers in order and returns the first hit. The UI
  * always routes a hit through the "confirm dimensions" step, so estimated
  * results are shown (and editable) before anything is placed. Adding a
  * provider is a change here only — no UI changes needed.
- *
- * Shipping in this build:
- *   - Catalog: a small built-in catalog of common products (offline).
  *
  * Ready to enable (each needs a backend endpoint — an API key must never live
  * in this client-side build, so they call a serverless proxy you host):
@@ -22,16 +19,6 @@ export interface FurnitureProvider {
   /** Return null if this provider can't answer the query. */
   lookup(query: string): Promise<FurnitureDimensions | null>;
 }
-
-const catalogProvider: FurnitureProvider = {
-  label: 'Catalog',
-  async lookup(query) {
-    const entry = matchCatalog(query);
-    if (!entry) return null;
-    const { name, widthMm, depthMm, heightMm } = entry;
-    return { name, widthMm, depthMm, heightMm, source: 'catalog', confidence: 'estimated' };
-  },
-};
 
 const TIMEOUT_MS = 8000;
 const MAX_REASONABLE_MM = 20_000;
@@ -50,6 +37,10 @@ class EndpointProvider implements FurnitureProvider {
     private readonly source: FurnitureSource,
     private readonly endpoint: string | undefined
   ) {}
+
+  get enabled(): boolean {
+    return !!this.endpoint;
+  }
 
   async lookup(query: string): Promise<FurnitureDimensions | null> {
     if (!this.endpoint) return null;
@@ -78,7 +69,12 @@ class EndpointProvider implements FurnitureProvider {
 }
 
 class ProviderRegistry {
-  constructor(private readonly providers: FurnitureProvider[]) {}
+  constructor(private readonly providers: EndpointProvider[]) {}
+
+  /** True when at least one remote lookup is configured. */
+  get available(): boolean {
+    return this.providers.some(p => p.enabled);
+  }
 
   async lookup(query: string): Promise<FurnitureDimensions | null> {
     for (const p of this.providers) {
@@ -89,9 +85,7 @@ class ProviderRegistry {
   }
 }
 
-// Order = preference: free/offline first, then remote.
 export const defaultRegistry = new ProviderRegistry([
-  catalogProvider,
   new EndpointProvider('AI lookup', 'llm', import.meta.env.VITE_LLM_ENDPOINT),
   new EndpointProvider('Web lookup', 'scraper', import.meta.env.VITE_SCRAPER_ENDPOINT),
 ]);

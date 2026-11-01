@@ -298,6 +298,8 @@ export const usePlanStore = create<PlanState>((set, get) => {
         source: template.source ?? 'manual',
         confidence: template.confidence ?? 'user-entered',
         color: template.color ?? FURNITURE_COLORS[Math.floor(Math.random() * FURNITURE_COLORS.length)],
+        imageUrl: template.imageUrl,
+        productUrl: template.productUrl,
       };
       mutateActive(p => ({ ...p, furniture: [...p.furniture, item] }), { ...IDLE, selectedFurnitureId: item.id });
     },

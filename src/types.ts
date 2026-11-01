@@ -73,6 +73,12 @@ export type FurnitureItem = {
   confidence: Confidence;
   /** Tailwind / hex colour used for the rectangle fill. */
   color: string;
+} & ProductLinks;
+
+/** For catalog products: the retailer's thumbnail and product page (loaded from their site). */
+export type ProductLinks = {
+  imageUrl?: string;
+  productUrl?: string;
 };
 
 /** The listing a plan was opened from (HouseHunter's "Plan furniture" button). */
@@ -125,7 +131,7 @@ export type SavedFurniture = {
   shape?: FurnitureShape;
   source: FurnitureSource;
   confidence: Confidence;
-};
+} & ProductLinks;
 
 /** A built-in furniture preset (standard dimensions). */
 export type FurniturePreset = {
@@ -147,4 +153,4 @@ export type PlacingTemplate = {
   shape?: FurnitureShape;
   source?: FurnitureSource;
   confidence?: Confidence;
-};
+} & ProductLinks;

@@ -4,6 +4,7 @@ import { useOverlaps } from '../state/useOverlaps';
 import { formatLength } from '../lib/units';
 import { confidenceMeta, sourceLabel } from '../lib/furniture/provenance';
 import { ROOM_ROLES, roomSummary } from '../lib/rooms';
+import { ProductThumb } from './ProductThumb';
 import { measurementLink, planMeasurement } from '../lib/handoff';
 import type { FurnitureItem, PlanLink, Room, Wall } from '../types';
 
@@ -279,10 +280,22 @@ function SelectedPanel() {
 
   return (
     <section className="p-3 border-t border-line bg-bg-overlay/40">
-      <h3 className="label mb-1 truncate">Selected: {selected.name}</h3>
-      <div className="flex items-center gap-1.5 mb-2 text-xs text-ink-mid">
-        <span className="w-2 h-2 rounded-full" style={{ background: meta.dot }} />
-        {meta.label} · {sourceLabel(selected.source)}
+      <div className="flex items-start gap-2 mb-2">
+        {selected.imageUrl && <ProductThumb src={selected.imageUrl} size={44} />}
+        <div className="min-w-0">
+          <h3 className="label mb-1 truncate" title={selected.name}>
+            Selected: {selected.name}
+          </h3>
+          <div className="flex items-center gap-1.5 text-xs text-ink-mid">
+            <span className="w-2 h-2 rounded-full" style={{ background: meta.dot }} />
+            {meta.label} · {sourceLabel(selected.source)}
+            {selected.productUrl && (
+              <a className="text-em hover:underline ml-auto" href={selected.productUrl} target="_blank" rel="noreferrer noopener">
+                Product ↗
+              </a>
+            )}
+          </div>
+        </div>
       </div>
       <div className="grid grid-cols-4 gap-1.5">
         <button className="btn !px-1" onClick={() => rotateFurniture(selected.id, -15)} title="Rotate left (Shift+R)" aria-label="Rotate 15° left">

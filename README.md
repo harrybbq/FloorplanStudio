@@ -12,7 +12,7 @@ Everything runs in the browser and is saved to that browser's `localStorage`; no
 ```bash
 npm install
 npm run dev        # http://localhost:5180
-npm test           # vitest — geometry, shapes, units, catalog matching
+npm test           # vitest — geometry, shapes, units, rooms, catalog, HouseHunter hand-off
 npm run build      # typecheck + production build into dist/
 ```
 
@@ -25,8 +25,9 @@ Pushing to `main` runs the tests, builds, and deploys to GitHub Pages
 1. **Load a floorplan** — upload, paste (Ctrl/⌘+V) or drag an image in, or click *Try a sample plan*.
    Large images are downscaled on import so they fit in browser storage.
 2. **Calibrate** — click two points on a known distance and enter it (`3m`, `1500`, `10'6"`…).
-3. **Add furniture** — *Custom* (type dimensions), *Presets*, *Maker* (draw any outline on a grid),
-   *Lookup* (built-in IKEA / B&Q / Tesco catalog), or your *Library*. Click the plan to place it.
+3. **Add furniture** — *Catalog* (~320 real products from IKEA, B&Q, Argos/Habitat, John Lewis and Next,
+   with thumbnails and links), *Custom* (type dimensions), *Presets*, *Maker* (draw any outline on a grid),
+   or your *Library*. Click the plan to place it. Round tables and corner sofas keep their real shape.
 4. Optionally **trace walls** so furniture poking through a wall is flagged too.
 5. **Measure rooms** (*Room* / `M`): click the corners, then the first corner again (or double-click / Enter).
    Near-level edges snap straight. Each room shows length × width (its smallest bounding rectangle) and area.
@@ -60,7 +61,9 @@ listing's floorplan sq ft, kitchen and bedroom-2 sizes. HouseHunter shows old �
 | `src/lib/footprint.ts` | Shape system: drawable outline + convex parts (L-shapes split in two, custom polygons triangulated) |
 | `src/lib/geometry.ts` | Overlap detection (SAT on convex parts, segment tests for walls) |
 | `src/lib/units.ts` | Everything is stored in mm; parsing/formatting for metric and imperial |
-| `src/lib/furniture/providers.ts` | Dimension lookup chain. Catalog is built in; AI/web lookup activate when `VITE_LLM_ENDPOINT` / `VITE_SCRAPER_ENDPOINT` point at a serverless proxy |
+| `src/lib/furniture/catalog.ts` | The product catalog: search, store image/product URLs, round and L shapes. Data in `catalog.json` (loaded on demand) |
+| `scripts/build-catalog.mjs` | Rebuilds `catalog.json` from `scripts/catalog-raw/*.json` (raw retailer data, Nov 2026): filters accessories, re-files categories, drops impossible sizes |
+| `src/lib/furniture/providers.ts` | Optional online lookup for products not in the catalog: activates when `VITE_LLM_ENDPOINT` / `VITE_SCRAPER_ENDPOINT` point at a serverless proxy |
 | `src/components/FloorplanCanvas.tsx` | The Konva stage: pan/zoom, tool clicks, furniture rendering |
 
 Positions are stored in the floorplan image's pixel space, so zooming never changes the scale.
